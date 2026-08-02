@@ -1,5 +1,7 @@
 import os
+import json
 import logging
+from typing import List
 import discord
 from discord.ext import commands
 from src.config.settings import Settings
@@ -8,6 +10,57 @@ from src.utils.upstash import UpstashRedis
 from src.utils.health_server import HealthServer
 
 logger = logging.getLogger("Nym")
+
+DEFAULT_PREFIXES: List[str] = ["!", ","]
+
+
+async def get_prefix(bot, message: discord.Message):
+    """Dynamic prefix resolver checking Upstash Redis cache and SQLite DB per guild."""
+    if not message.guild:
+        return commands.when_mentioned_or(*DEFAULT_PREFIXES)(bot, message)
+
+    guild_id = message.guild.id
+    cache_key = f"prefixes:{guild_id}"
+    prefixes = None
+
+    # 1. Try Upstash Redis Cache
+    if hasattr(bot, "upstash") and bot.upstash.is_configured:
+        try:
+            cached_json = await bot.upstash.get(cache_key)
+            if cached_json:
+                prefixes = json.loads(cached_json)
+        except Exception:
+            pass
+
+    # 2. Fallback to SQLite DB
+    if not prefixes and hasattr(bot, "db") and bot.db:
+        try:
+            row = await bot.db.fetch_one("SELECT prefix FROM guild_settings WHERE guild_id = ?", (guild_id,))
+            if row and row["prefix"]:
+                try:
+                    prefixes = json.loads(row["prefix"])
+                except Exception:
+                    prefixes = [row["prefix"]]
+
+                # Warm Upstash cache
+                if hasattr(bot, "upstash") and bot.upstash.is_configured:
+                    await bot.upstash.set(cache_key, json.dumps(prefixes))
+        except Exception:
+            pass
+
+    if not prefixes:
+        prefixes = DEFAULT_PREFIXES.copy()
+
+    # Expand prefixes (e.g. if 'nym' is set, also support 'nym ' with space if word)
+    expanded = []
+    for p in prefixes:
+        expanded.append(p)
+        if p.replace(" ", "").isalnum() and not p.endswith(" "):
+            expanded.append(p + " ")
+
+    # Deduplicate and sort by length descending
+    unique_prefixes = sorted(list(set(expanded + DEFAULT_PREFIXES)), key=len, reverse=True)
+    return commands.when_mentioned_or(*unique_prefixes)(bot, message)
 
 
 class NymBot(commands.Bot):
@@ -19,10 +72,13 @@ class NymBot(commands.Bot):
         intents.members = True
 
         super().__init__(
+            command_prefix=get_prefix,
             intents=intents,
             owner_id=settings.owner_id,
             debug_guilds=[settings.guild_id] if settings.guild_id else None,
+            case_insensitive=True,
         )
+
 
         self.settings = settings
         self.db = DatabaseManager(db_path=settings.db_path)
