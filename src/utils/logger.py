@@ -3,6 +3,14 @@ import os
 import sys
 import colorlog
 
+# Reconfigure stdout on Windows to support emojis and UTF-8 characters in terminal
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+
 
 def setup_logger(log_level: str = "INFO", log_file: str = "logs/nym.log") -> logging.Logger:
     """Configures colorlog console output and file logging.
