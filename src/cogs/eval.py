@@ -16,8 +16,11 @@ from typing import Optional, Union, Any
 import discord
 from discord.ext import commands
 from src.utils.embeds import EmbedBuilder
+from src.utils.checks import is_trusted_admin
+
 
 logger = logging.getLogger("Nym")
+
 
 
 class EvalCog(commands.Cog):
@@ -196,22 +199,28 @@ class EvalCog(commands.Cog):
 
     # --- Commands ---
 
-    @discord.slash_command(name="eval", description="[Owner Only] Evaluate Python code in Nym runtime.")
-    @commands.is_owner()
+    @discord.slash_command(name="eval", description="[Trusted Admin Only] Evaluate Python code in Nym runtime.")
     async def eval_slash(self, ctx: discord.ApplicationContext, code: str):
-        """Slash command for owner code evaluation."""
+        """Slash command for trusted admin code evaluation."""
+        if not await is_trusted_admin(ctx):
+            embed = EmbedBuilder.error("Access Denied", "Only Bot Owners and trusted Bot Admins can use eval.")
+            return await ctx.respond(embed=embed, ephemeral=True)
         await self._execute_eval(ctx, code)
 
     @commands.command(name="eval")
-    @commands.is_owner()
     async def eval_prefix(self, ctx: commands.Context, *, code: str):
-        """Prefix command for owner code evaluation (!eval <code>)."""
+        """Prefix command for trusted admin code evaluation (!eval <code>)."""
+        if not await is_trusted_admin(ctx):
+            embed = EmbedBuilder.error("Access Denied", "Only Bot Owners and trusted Bot Admins can use eval.")
+            return await ctx.send(embed=embed)
         await self._execute_eval(ctx, code)
 
     @commands.command(name="evalfile")
-    @commands.is_owner()
     async def eval_file(self, ctx: commands.Context):
         """Prefix command to evaluate code from an attached .py or .txt file."""
+        if not await is_trusted_admin(ctx):
+            embed = EmbedBuilder.error("Access Denied", "Only Bot Owners and trusted Bot Admins can use eval.")
+            return await ctx.send(embed=embed)
         if not ctx.message.attachments:
             return await ctx.send("❌ Please attach a `.py` or `.txt` file containing code to evaluate.")
 
@@ -219,6 +228,7 @@ class EvalCog(commands.Cog):
         code_bytes = await attachment.read()
         code_text = code_bytes.decode("utf-8", errors="replace")
         await self._execute_eval(ctx, code_text)
+
 
 
 def setup(bot: commands.Bot):

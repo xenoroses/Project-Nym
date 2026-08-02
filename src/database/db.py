@@ -49,7 +49,19 @@ class DatabaseManager:
             """
         )
 
+        # Table: Bot Admins
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                user_id INTEGER PRIMARY KEY,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         await self._db.commit()
+
 
 
     async def close(self) -> None:

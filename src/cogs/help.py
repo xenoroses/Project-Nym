@@ -118,15 +118,19 @@ class HelpCategorySelect(discord.ui.Select):
 
         elif category == "eval":
             embed = EmbedBuilder.base(
-                title="⚡ Developer Evaluation Engine",
-                description="Owner-only code execution sandbox with AST returns and stdout capture.",
+                title="⚡ Developer Evaluation & Admin Engine",
+                description="Owner & Trusted Admin code execution sandbox and access control management.",
                 color=EmbedBuilder.COLOR_WARNING,
                 author=user,
             )
             embed.add_field(name="`/eval <code>` / `nym eval <code>`", value="Evaluate Python code in Nym's async runtime.", inline=False)
             embed.add_field(name="`nym evalfile`", value="Attach a `.py` file to execute complex scripts.", inline=False)
+            embed.add_field(name="`nym addadmin <@user>`", value="[Owner Only] Grant global Bot Admin & eval privileges.", inline=False)
+            embed.add_field(name="`nym removeadmin <@user>`", value="[Owner Only] Revoke global Bot Admin privileges.", inline=False)
+            embed.add_field(name="`nym listadmins`", value="List all registered Bot Admins with eval access.", inline=False)
 
         return embed
+
 
 
 class NekotinaHelpView(discord.ui.View):
