@@ -118,8 +118,44 @@ class EvalCog(commands.Cog):
         except Exception as e:
             logger.warning(f"Failed to send eval response: {e}")
 
+    def _format_eval_result(self, result: Any) -> Optional[str]:
+        """Format return values cleanly with Nekotina aesthetics."""
+        if result is None:
+            return None
+
+        # Clean formatting for discord.Message objects
+        if isinstance(result, discord.Message):
+            return f"📤 `Message Sent` (ID: `{result.id}` | Channel: {result.channel.mention})"
+
+        # Clean formatting for discord.Embed objects
+        if isinstance(result, discord.Embed):
+            return f"🖼️ `discord.Embed` (Title: **{result.title or 'No Title'}**)"
+
+        # Clean formatting for discord.Member / User
+        if isinstance(result, (discord.Member, discord.User)):
+            return f"👤 `{result.name}` (ID: `{result.id}`)"
+
+        # Clean formatting for discord.Guild
+        if isinstance(result, discord.Guild):
+            return f"🏰 `{result.name}` (ID: `{result.id}`)"
+
+        # Clean formatting for dict / list
+        if isinstance(result, (dict, list)):
+            try:
+                formatted = json.dumps(result, indent=2, default=str)
+                if len(formatted) < 1000:
+                    return f"```json\n{formatted}\n```"
+            except Exception:
+                pass
+
+        repr_str = repr(result)
+        if len(repr_str) > 1000:
+            repr_str = repr_str[:997] + "..."
+
+        return f"```py\n{repr_str}\n```"
+
     async def _execute_eval(self, ctx: Union[discord.ApplicationContext, commands.Context], code: str):
-        """Core evaluation engine executing Python code in an async sandbox."""
+        """Core evaluation engine executing Python code in an async sandbox with Nekotina aesthetics."""
         code = self._clean_code(code)
 
         if not code:
@@ -179,35 +215,38 @@ class EvalCog(commands.Cog):
 
             execution_time = round((time.perf_counter() - start_time) * 1000, 2)
             stdout_str = stdout.getvalue().strip()
+            formatted_result = self._format_eval_result(result)
 
-            # Format outputs
-            output_parts = []
+            # Build Nekotina-styled result embed
+            embed = EmbedBuilder.base(
+                title="⚡ Evaluation Result",
+                description="*Code executed in Nym async runtime.*",
+                color=EmbedBuilder.COLOR_NEKOTINA,
+                author=author,
+                footer=f"Execution Latency: {execution_time} ms"
+            )
+
             if stdout_str:
-                output_parts.append(f"**Stdout Output:**\n```py\n{stdout_str}\n```")
-            if result is not None:
-                output_parts.append(f"**Return Value:**\n```py\n{repr(result)}\n```")
-            if not output_parts:
-                output_parts.append("```\n(Executed successfully with no output)\n```")
+                embed.add_field(name="📤 Stdout Output", value=f"```py\n{stdout_str[:1000]}\n```", inline=False)
 
-            response_text = "\n".join(output_parts)
+            if formatted_result:
+                embed.add_field(name="📥 Return Value", value=formatted_result, inline=False)
 
-            # Handle response length limits
-            if len(response_text) > 1900:
+            if not stdout_str and not formatted_result:
+                embed.add_field(name="✨ Status", value="`Executed cleanly with no return value.`", inline=False)
+
+            embed.add_field(name="⏱️ Execution Latency", value=f"`{execution_time} ms`", inline=True)
+
+            # Attachment fallback if total content is huge
+            total_content_len = len(stdout_str) + (len(str(result)) if result else 0)
+            if total_content_len > 1800:
                 full_log = f"--- EVALUATION TELEMETRY ---\nExecution Time: {execution_time} ms\n\n--- STDOUT ---\n{stdout_str}\n\n--- RETURN ---\n{repr(result)}"
                 file = discord.File(
                     io.BytesIO(full_log.encode("utf-8")),
-                    filename=f"eval_output_{int(time.time())}.txt"
-                )
-                embed = EmbedBuilder.success(
-                    title="⚡ Evaluation Completed",
-                    description=f"Output exceeded character limit. Full telemetry attached.\n**Execution Time:** `{execution_time} ms`"
+                    filename=f"eval_telemetry_{int(time.time())}.txt"
                 )
                 await self._reply(ctx, embed, file=file)
             else:
-                embed = EmbedBuilder.success(
-                    title="⚡ Evaluation Completed",
-                    description=f"{response_text}\n\n**Execution Time:** `{execution_time} ms`"
-                )
                 await self._reply(ctx, embed)
 
         except Exception as e:
@@ -216,12 +255,23 @@ class EvalCog(commands.Cog):
             err_traceback = self._sanitize_traceback(raw_err_traceback)
             clean_err = self._sanitize_traceback(f"{type(e).__name__}: {e}")
 
-            embed = EmbedBuilder.error(
+            embed = EmbedBuilder.base(
                 title="❌ Evaluation Error",
-                description=f"**Error:**\n```py\n{clean_err}\n```\n**Execution Time:** `{execution_time} ms`"
+                description=f"```py\n{clean_err}\n```",
+                color=EmbedBuilder.COLOR_ERROR,
+                author=author,
+                footer=f"Execution Latency: {execution_time} ms"
             )
 
-            # Attach full traceback if detailed
+            if len(err_traceback) > 1000:
+                clean_tb = err_traceback[:900] + "\n... [truncated]"
+                embed.add_field(name="📋 Stack Trace", value=f"```py\n{clean_tb}\n```", inline=False)
+            else:
+                embed.add_field(name="📋 Stack Trace", value=f"```py\n{err_traceback}\n```", inline=False)
+
+            embed.add_field(name="⏱️ Execution Latency", value=f"`{execution_time} ms`", inline=True)
+
+            # Full file attachment if error is huge
             if len(err_traceback) > 1500:
                 file = discord.File(
                     io.BytesIO(err_traceback.encode("utf-8")),
@@ -229,8 +279,8 @@ class EvalCog(commands.Cog):
                 )
                 await self._reply(ctx, embed, file=file)
             else:
-                embed.description += f"\n**Traceback:**\n```py\n{err_traceback[:1000]}\n```"
                 await self._reply(ctx, embed)
+
 
 
     # --- Commands ---
