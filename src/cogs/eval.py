@@ -34,6 +34,16 @@ class EvalCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    def _sanitize_traceback(self, text: str) -> str:
+        """Sanitize local file paths and environment directories from tracebacks and errors to prevent info leaks."""
+        text = re.sub(r'[A-Za-z]:\\[^\n"]*\\src\\', 'src/', text)
+        text = re.sub(r'[A-Za-z]:\\[^\n"]*\\.venv\\[^\n"]*', '[virtualenv]', text)
+        text = re.sub(r'[A-Za-z]:\\[^\n"]*\\Python\d*\\[^\n"]*', '[python_lib]', text)
+        text = re.sub(r'[A-Za-z]:\\[^\n"]*', '[system_core]', text)
+        text = re.sub(r'/Users/[^\n"]*/src/', 'src/', text)
+        text = re.sub(r'/home/[^\n"]*/src/', 'src/', text)
+        return text
+
     def _clean_code(self, code: str) -> str:
         """Clean markdown formatting, codeblocks, and uneven leading indentation."""
         code = code.strip()
@@ -44,7 +54,14 @@ class EvalCog(commands.Cog):
             if lines and lines[-1].startswith("```"):
                 lines = lines[:-1]
             code = "\n".join(lines)
-        return textwrap.dedent(code).strip()
+
+        dedented = textwrap.dedent(code).strip()
+        lines = dedented.split("\n")
+        if lines:
+            lines[0] = lines[0].lstrip()
+            dedented = textwrap.dedent("\n".join(lines)).strip()
+
+        return dedented
 
     def _wrap_code(self, code: str) -> ast.Module:
         """Parses and wraps code in an async function, transforming the last expression to a return statement."""
@@ -121,10 +138,10 @@ class EvalCog(commands.Cog):
                 wrapped_ast = self._wrap_code(code)
                 compiled_code = compile(wrapped_ast, filename="<eval>", mode="exec")
                 exec(compiled_code, env)
-            except SyntaxError:
+            except (SyntaxError, IndentationError):
                 # Fallback to standard execution if AST transformation fails
-                body = "\n".join(f"    {line}" for line in code.split("\n"))
-                exec(f"async def __eval_func__():\n{body}", env)
+                indented_body = textwrap.indent(code, "    ")
+                exec(f"async def __eval_func__():\n{indented_body}", env)
 
             func = env["__eval_func__"]
 
@@ -173,8 +190,9 @@ class EvalCog(commands.Cog):
 
         except Exception as e:
             execution_time = round((time.perf_counter() - start_time) * 1000, 2)
-            err_traceback = traceback.format_exc()
-            clean_err = f"{type(e).__name__}: {e}"
+            raw_err_traceback = traceback.format_exc()
+            err_traceback = self._sanitize_traceback(raw_err_traceback)
+            clean_err = self._sanitize_traceback(f"{type(e).__name__}: {e}")
 
             embed = EmbedBuilder.error(
                 title="❌ Evaluation Error",
@@ -197,6 +215,7 @@ class EvalCog(commands.Cog):
                     await ctx.respond(embed=embed, ephemeral=True)
                 else:
                     await ctx.send(embed=embed)
+
 
     # --- Commands ---
 

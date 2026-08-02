@@ -78,9 +78,10 @@ class HelpCategorySelect(discord.ui.Select):
                 author=user,
                 thumbnail_url=bot_avatar,
             )
-            embed.add_field(name="🌐 Operational Status", value="`24/7 Render Cloud` ✅", inline=True)
+            embed.add_field(name="🌐 Operational Status", value="`24/7 Active Protocol` ✅", inline=True)
             embed.add_field(name="📊 Connected Servers", value=f"`{len(self.bot.guilds)}`", inline=True)
             embed.add_field(name="⚡ Active Commands", value=f"`{len(self.bot.commands)}`", inline=True)
+
 
         elif category == "prefix":
             embed = EmbedBuilder.base(
@@ -134,7 +135,7 @@ class HelpCategorySelect(discord.ui.Select):
 
 
 class NekotinaHelpView(discord.ui.View):
-    """Nekotina-styled interactive UI View with Dropdown and Action Buttons."""
+    """Nekotina-styled interactive UI View with Category Dropdown."""
 
     def __init__(self, bot: commands.Bot, author_id: int, timeout: float = 120.0):
         super().__init__(timeout=timeout)
@@ -145,23 +146,6 @@ class NekotinaHelpView(discord.ui.View):
         self.select = HelpCategorySelect(bot, author_id)
         self.add_item(self.select)
 
-        # Add External Link Buttons
-        self.add_item(
-            discord.ui.Button(
-                label="Web Health Status",
-                url="https://project-nym.onrender.com/health",
-                style=discord.ButtonStyle.link,
-                emoji="🌐"
-            )
-        )
-        self.add_item(
-            discord.ui.Button(
-                label="GitHub Repo",
-                url="https://github.com/xenoroses/Project-Nym",
-                style=discord.ButtonStyle.link,
-                emoji="📁"
-            )
-        )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
