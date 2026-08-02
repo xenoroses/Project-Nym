@@ -110,8 +110,6 @@ class StickyCog(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def sticky_slash(self, ctx: discord.ApplicationContext, message: str):
         """Slash command to set a sticky notice in the channel."""
-        await ctx.defer(ephemeral=True)
-
         await self._set_sticky_data(
             channel_id=ctx.channel.id,
             guild_id=ctx.guild.id,
@@ -129,9 +127,8 @@ class StickyCog(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def unsticky_slash(self, ctx: discord.ApplicationContext):
         """Slash command to remove a sticky message from the channel."""
-        await ctx.defer(ephemeral=True)
-
         data = await self._get_sticky_data(ctx.channel.id)
+
         if not data:
             embed = EmbedBuilder.warning(
                 title="No Sticky Message",

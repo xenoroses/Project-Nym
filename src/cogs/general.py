@@ -14,23 +14,26 @@ class General(commands.Cog):
     @discord.slash_command(name="ping", description="Check the bot's latency and response time.")
     async def ping(self, ctx: discord.ApplicationContext):
         """Slash command to verify bot responsiveness."""
-        start_time = time.perf_counter()
-        # Initial response to measure round-trip time
-        await ctx.respond("🏓 Pinging...", ephemeral=False)
-        end_time = time.perf_counter()
-
-        rtt_latency = round((end_time - start_time) * 1000, 2)
         ws_latency = round(self.bot.latency * 1000, 2)
+        start_time = time.perf_counter()
 
         embed = EmbedBuilder.info(
             title="🏓 Pong!",
-            description=f"**Websocket Latency:** `{ws_latency} ms`\n"
-                        f"**API Response Time:** `{rtt_latency} ms`",
+            description=f"**Websocket Latency:** `{ws_latency} ms`",
             footer="Nym Bot • Status Operational",
         )
-
         view = ConfirmView(author_id=ctx.author.id)
-        await ctx.interaction.edit_original_response(content=None, embed=embed, view=view)
+
+        await ctx.respond(embed=embed, view=view)
+        end_time = time.perf_counter()
+
+        rtt_latency = round((end_time - start_time) * 1000, 2)
+        embed.description = (
+            f"**Websocket Latency:** `{ws_latency} ms`\n"
+            f"**API Response Time:** `{rtt_latency} ms`"
+        )
+        await ctx.interaction.edit_original_response(embed=embed, view=view)
+
 
     @discord.slash_command(name="info", description="Display information about Nym.")
     async def info(self, ctx: discord.ApplicationContext):

@@ -83,7 +83,6 @@ class PrefixCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def prefix_set_slash(self, ctx: discord.ApplicationContext, prefix: str):
         """Set a single custom prefix for the server."""
-        await ctx.defer(ephemeral=True)
         new_prefix = prefix.strip()
 
         if len(new_prefix) > 10:
@@ -104,7 +103,6 @@ class PrefixCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def prefix_add_slash(self, ctx: discord.ApplicationContext, prefix: str):
         """Add an extra prefix to the server."""
-        await ctx.defer(ephemeral=True)
         add_p = prefix.strip()
 
         current = await self._get_guild_prefixes(ctx.guild.id)
@@ -126,7 +124,6 @@ class PrefixCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def prefix_remove_slash(self, ctx: discord.ApplicationContext, prefix: str):
         """Remove a prefix from the server."""
-        await ctx.defer(ephemeral=True)
         rem_p = prefix.strip()
 
         current = await self._get_guild_prefixes(ctx.guild.id)
@@ -152,7 +149,6 @@ class PrefixCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def prefix_reset_slash(self, ctx: discord.ApplicationContext):
         """Reset server prefixes to default."""
-        await ctx.defer(ephemeral=True)
         await self._save_guild_prefixes(ctx.guild.id, DEFAULT_PREFIXES.copy())
 
         embed = EmbedBuilder.success(
@@ -160,6 +156,7 @@ class PrefixCog(commands.Cog):
             description=f"✅ Server prefixes reset back to default: `!` and `,`"
         )
         await ctx.respond(embed=embed, ephemeral=True)
+
 
     @prefix_group.command(name="list", description="Display all active prefixes for this server.")
     async def prefix_list_slash(self, ctx: discord.ApplicationContext):

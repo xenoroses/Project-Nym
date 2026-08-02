@@ -41,8 +41,11 @@ class HealthServer:
             self._site = web.TCPSite(self._runner, "0.0.0.0", self.port)
             await self._site.start()
             logger.info(f"🌐 Health Check HTTP server running on port {self.port} (http://0.0.0.0:{self.port}/health)")
+        except OSError as e:
+            logger.warning(f"⚠️ Could not bind Health Server to port {self.port} ({e}). Another instance may be running locally.")
         except Exception as e:
             logger.error(f"Failed to start Health Server on port {self.port}: {e}", exc_info=True)
+
 
     async def stop(self) -> None:
         """Stop HTTP web server gracefully."""
