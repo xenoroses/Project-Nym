@@ -227,10 +227,10 @@ class StickyCog(commands.Cog):
 
             # Post new sticky message
             try:
-                formatted_notice = f"📌 **Sticky Notice:**\n{sticky_text}"
-                new_msg = await message.channel.send(formatted_notice)
+                new_msg = await message.channel.send(sticky_text)
 
                 # Update last_id
+
                 await self._set_sticky_data(
                     channel_id=message.channel.id,
                     guild_id=message.guild.id,

@@ -1,214 +1,299 @@
 ================================================================================
-                    PROJECT NYM - DEVELOPER & OWNER EVALUATION GUIDE
-                               (Evaluation Engine v2.0)
+               PROJECT NYM - ULTIMATE EVALUATION ENGINE GUIDE & EXAMPLES
+                                (Nym Eval Core v2.0)
 ================================================================================
 
 OVERVIEW:
 --------------------------------------------------------------------------------
-The Nym Evaluation Engine (`/eval` and `!eval`) is a high-density, async-native
-runtime code execution system built exclusively for Bot Owners.
+The Nym Evaluation Engine (`/eval`, `!eval`, and `!evalfile`) is an advanced, 
+async-native developer runtime system designed exclusively for Bot Owners.
 
-It allows you to inspect bot state, execute administrative actions, query SQLite 
-and Upstash Redis, manage members and roles, send interactive messages, and run
-custom scripts directly inside Nym's live event loop.
-
-KEY FEATURES:
-- IMPLICIT LAST-LINE RETURN: The last expression in your snippet (e.g. `bot.latency`)
-  is automatically returned even if you don't write `return`.
-- STDOUT CAPTURE: Anything printed using `print(...)` is captured and displayed.
-- RICH CONTEXT ENVIRONMENT: Shortcuts for `bot`, `ctx`, `guild`, `channel`, `author`,
-  `message`, `me`, `db`, `upstash`, `discord`, `asyncio`, `datetime`, `timedelta`, etc.
-- FILE EVALUATION (`!evalfile`): Attach a `.py` file to a message to execute full scripts.
-- TELEMETRY & TRACEBACK: Execution time measured in milliseconds with automatic `.txt`
-  log attachment for long outputs.
+It executes Python code dynamically inside Nym's live event loop, providing 
+direct access to the bot instance, SQLite database, Upstash Redis cache, 
+Discord API models, and Python standard library.
 
 ================================================================================
-AVAILABLE CONTEXT ENVIRONMENT SHORTCUTS
+SECTION 1: EVAL SETUP & ARCHITECTURE
 ================================================================================
-- `bot`      : Active Py-Cord NymBot client instance
-- `ctx`      : Current command Context / ApplicationContext
-- `guild`    : Current Discord Guild (Server) object
-- `channel`  : Current TextChannel / Thread object
-- `author`   : Invoking User / Member object
+
+1. OWNER PERMISSIONS & AUTHORIZATION:
+   - Evaluation commands require Bot Owner privileges (`@commands.is_owner()`).
+   - Configure your Discord User ID in `.env`:
+     `OWNER_ID=450864876416401419`
+
+2. IMPLICIT LAST-LINE RETURN (AST TRANSFORMATION):
+   - The Evaluation Engine automatically parses your code's Abstract Syntax Tree (AST).
+   - If the last statement is an expression (e.g. `bot.latency * 1000` or `await db.fetch_all(...)`),
+     it is automatically evaluated and returned without needing a `return` keyword!
+
+3. STDOUT CAPTURE & TELEMETRY:
+   - Standard `print(...)` output is captured via `sys.stdout` and displayed.
+   - Execution duration is measured down to the millisecond.
+
+4. AUTOMATIC ATTACHMENT FOR LARGE OUTPUTS:
+   - If the evaluation output or stack trace exceeds Discord's 2,000 character limit,
+     Nym automatically packages the telemetry into a `.txt` or `.log` file attachment.
+
+5. FILE ATTACHMENT EVALUATION (`!evalfile`):
+   - Upload any `.py` or `.txt` file with `!evalfile` as the message content to execute 
+     full-length multi-line scripts.
+
+================================================================================
+SECTION 2: PRE-BOUND ENVIRONMENT SHORTCUTS
+================================================================================
+
+When writing eval snippets, the following variables are pre-bound in your execution context:
+
+- `bot`      : Py-Cord NymBot client (`commands.Bot`)
+- `ctx`      : Invoking Command Context / ApplicationContext
+- `guild`    : Current Discord Server (`ctx.guild`)
+- `channel`  : Current Text Channel / Thread (`ctx.channel`)
+- `author`   : Invoking Member / User (`ctx.author`)
 - `message`  : Invoking Message object (alias: `msg`)
-- `me`       : Nym's Member object in the guild (or `bot.user`)
-- `db`       : Async SQLite DatabaseManager (`bot.db`)
-- `upstash`  : Async Upstash Redis REST client (`bot.upstash`)
-- `discord`  : Py-Cord module
+- `me`       : Nym's Member object in current guild (or `bot.user`)
+- `db`       : SQLite Database Manager (`bot.db`)
+- `upstash`  : Upstash Redis REST Client (`bot.upstash`)
+- `discord`  : `discord` Py-Cord package
 - `asyncio`  : Python `asyncio` module
-- `datetime` : `datetime.datetime` object
-- `timedelta`: `datetime.timedelta` object
-- `os`, `sys`, `time`, `json`, `re`, `math` : Python standard library modules
+- `datetime` : `datetime.datetime` class
+- `timedelta`: `datetime.timedelta` class
+- `time`, `os`, `sys`, `json`, `re`, `math`, `logging` : Standard library modules
 
 ================================================================================
-CATEGORY 1: BASIC TELEMETRY & DIAGNOSTICS
+SECTION 3: COMPLETE EXAMPLES BY CATEGORY
 ================================================================================
 
-1. Print simple text to channel:
-   !eval print("Hello from Nym!")
+--------------------------------------------------------------------------------
+CATEGORY 1: BASIC TELEMETRY & MESSAGING
+--------------------------------------------------------------------------------
 
-2. Send a message to the current channel:
-   !eval await ctx.send("The neural link is active.")
+1. Print simple text to console/channel:
+   nym eval print("Hello from Nym Core!")
 
-3. Check Bot Latency:
-   !eval f"{round(bot.latency * 1000, 2)} ms"
+2. Send a text message to current channel:
+   nym eval await ctx.send("The neural link is active.")
+
+3. Check WebSocket Latency (Implicit Return):
+   nym eval f"{round(bot.latency * 1000, 2)} ms"
 
 4. React to your command message:
-   !eval await message.add_reaction("🔥")
+   nym eval await message.add_reaction("🔥")
 
-5. Check server count & total members:
-   !eval f"Guilds: {len(bot.guilds)} | Total Members: {sum(g.member_count for g in bot.guilds)}"
+5. Check server count & total member count:
+   nym eval f"Guilds: {len(bot.guilds)} | Total Members: {sum(g.member_count for g in bot.guilds)}"
 
-================================================================================
-CATEGORY 2: DIRECT MESSAGES (DM)
-================================================================================
+6. Send a styled Nekotina embed:
+   nym eval
+   from src.utils.embeds import EmbedBuilder
+   embed = EmbedBuilder.info("System Test", "Operational check passed.", author=author)
+   await ctx.send(embed=embed)
+
+
+--------------------------------------------------------------------------------
+CATEGORY 2: DIRECT MESSAGING (DM)
+--------------------------------------------------------------------------------
 
 1. Send a DM to yourself:
-   !eval await author.send("Hello from Nym core.")
+   nym eval await author.send("Hello from Nym core.")
 
-2. Send a self-destructing DM (deletes after 10 seconds):
-   !eval await author.send("This security payload will self-destruct.", delete_after=10)
+2. Send a self-destructing DM (auto-deletes after 10 seconds):
+   nym eval await author.send("This security payload will self-destruct.", delete_after=10)
 
 3. Send a DM to a specific user by ID:
-   !eval await guild.get_member(USER_ID).send("Attention required.")
-   Example:
-   !eval await guild.get_member(450864876416401419).send("Wake up.")
+   nym eval await guild.get_member(USER_ID).send("Attention required.")
 
-================================================================================
-CATEGORY 3: MESSAGE & CHANNEL MANAGEMENT
-================================================================================
+   Example:
+   nym eval await guild.get_member(450864876416401419).send("Wake up.")
+
+
+--------------------------------------------------------------------------------
+CATEGORY 3: CHANNEL & MESSAGE CONTROL
+--------------------------------------------------------------------------------
 
 1. Send a message that auto-deletes after 5 seconds:
-   !eval await ctx.send("Temporary operational notice", delete_after=5)
+   nym eval await ctx.send("Temporary operational notice", delete_after=5)
 
 2. Delete your command message:
-   !eval await message.delete()
+   nym eval await message.delete()
 
 3. Send message to another channel by ID:
-   !eval await bot.get_channel(CHANNEL_ID).send("System broadcast.")
+   nym eval await bot.get_channel(CHANNEL_ID).send("System broadcast.")
+
    Example:
-   !eval await bot.get_channel(981221146378793015).send("Hello audit logs.")
+   nym eval await bot.get_channel(981221146378793015).send("Hello audit logs.")
 
-4. Purge the last 10 messages in the current channel:
-   !eval await channel.purge(limit=10)
+4. Purge last 10 messages in current channel:
+   nym eval await channel.purge(limit=10)
 
-5. Purge messages from a specific user:
-   !eval await channel.purge(limit=20, check=lambda m: m.author.id == USER_ID)
+5. Purge messages from a specific user only:
+   nym eval await channel.purge(limit=20, check=lambda m: m.author.id == 450864876416401419)
 
-================================================================================
+6. Pin a specific message by ID:
+   nym eval
+   msg = await channel.fetch_message(MESSAGE_ID)
+   await msg.pin()
+
+
+--------------------------------------------------------------------------------
 CATEGORY 4: LOOPS & BATCH OPERATIONS
-================================================================================
+--------------------------------------------------------------------------------
 
-1. Send a message multiple times:
-   !eval
+1. Send a message 3 times:
+   nym eval
    for i in range(3):
        await ctx.send(f"Batch test iteration {i+1}")
 
-2. Send disappearing messages in loop:
-   !eval
+2. Send numbered messages:
+   nym eval
    for i in range(5):
-       await ctx.send(f"Disappearing packet {i+1}", delete_after=5)
+       await ctx.send(f"Message {i+1}")
 
-3. Send custom embeds in batch:
-   !eval
+3. Send 50 disappearing messages (auto-deletes after 10 seconds):
+   nym eval
+   for i in range(50):
+       await ctx.send("Spam test packet", delete_after=10)
+
+4. Send batch embeds:
+   nym eval
    from src.utils.embeds import EmbedBuilder
-   embed = EmbedBuilder.success("Batch Test", "Iteration complete.")
-   await ctx.send(embed=embed)
+   for i in range(3):
+       embed = EmbedBuilder.success(f"Packet #{i+1}", "Batch operational telemetry.")
+       await ctx.send(embed=embed)
 
-================================================================================
+
+--------------------------------------------------------------------------------
 CATEGORY 5: MEMBER & MODERATION ACTIONS
-================================================================================
+--------------------------------------------------------------------------------
 
-1. Kick a user:
-   !eval await guild.get_member(USER_ID).kick(reason="Administrative evaluation test")
+1. Kick a user by ID:
+   nym eval await guild.get_member(USER_ID).kick(reason="Testing eval kick")
 
-2. Ban a user:
-   !eval await guild.get_member(USER_ID).ban(reason="Administrative evaluation test")
+2. Ban a user by ID:
+   nym eval await guild.get_member(USER_ID).ban(reason="Testing eval ban")
 
-3. Timeout (mute) a user for 5 minutes:
-   !eval await guild.get_member(USER_ID).timeout(timedelta(minutes=5))
+3. Unban a user by ID:
+   nym eval await guild.unban(discord.Object(id=USER_ID), reason="Testing eval unban")
 
-4. Remove timeout from a user:
-   !eval await guild.get_member(USER_ID).timeout(None)
+4. Timeout (mute) a user for 5 minutes:
+   nym eval await guild.get_member(USER_ID).timeout(timedelta(minutes=5))
 
-5. Change a user's nickname:
-   !eval await guild.get_member(USER_ID).edit(nick="Nym Operator")
+5. Remove timeout from a user:
+   nym eval await guild.get_member(USER_ID).timeout(None)
 
-================================================================================
+6. Change a member's nickname:
+   nym eval await guild.get_member(USER_ID).edit(nick="Nym Operator")
+
+
+--------------------------------------------------------------------------------
 CATEGORY 6: ROLE MANAGEMENT
-================================================================================
+--------------------------------------------------------------------------------
 
 1. Add a role to a user:
-   !eval await guild.get_member(USER_ID).add_roles(guild.get_role(ROLE_ID))
+   nym eval await guild.get_member(USER_ID).add_roles(guild.get_role(ROLE_ID))
 
 2. Remove a role from a user:
-   !eval await guild.get_member(USER_ID).remove_roles(guild.get_role(ROLE_ID))
+   nym eval await guild.get_member(USER_ID).remove_roles(guild.get_role(ROLE_ID))
 
-3. Give a role to all members in the server:
-   !eval
+3. Give a role to all human members in the server:
+   nym eval
    role = guild.get_role(ROLE_ID)
    for m in guild.members:
        if not m.bot and role not in m.roles:
            await m.add_roles(role)
 
-================================================================================
-CATEGORY 7: DATABASE (SQLITE) OPERATIONAL EVALS
-================================================================================
+4. Strip a role from all members:
+   nym eval
+   role = guild.get_role(ROLE_ID)
+   for m in role.members:
+       await m.remove_roles(role)
 
-1. Fetch all records from users table:
-   !eval await db.fetch_all("SELECT * FROM users")
 
-2. Query sticky messages in SQLite:
-   !eval await db.fetch_all("SELECT * FROM sticky_messages")
+--------------------------------------------------------------------------------
+CATEGORY 7: SQLITE DATABASE OPERATIONS (`db`)
+--------------------------------------------------------------------------------
 
-3. Insert or update user record manually:
-   !eval await db.execute("INSERT OR REPLACE INTO users (user_id, username) VALUES (?, ?)", (author.id, author.name))
+1. Fetch all records from SQLite `users` table:
+   nym eval await db.fetch_all("SELECT * FROM users")
 
-================================================================================
-CATEGORY 8: UPSTASH REDIS CACHE OPERATIONAL EVALS
-================================================================================
+2. Fetch all configured sticky messages from SQLite:
+   nym eval await db.fetch_all("SELECT * FROM sticky_messages")
 
-1. Ping Upstash Redis REST API:
-   !eval await upstash.ping()
+3. Query server prefix setting from SQLite:
+   nym eval await db.fetch_one("SELECT prefix FROM guild_settings WHERE guild_id = ?", (guild.id,))
+
+4. Insert or update user record manually:
+   nym eval await db.execute("INSERT OR REPLACE INTO users (user_id, username) VALUES (?, ?)", (author.id, author.name))
+
+5. Delete sticky message record from database:
+   nym eval await db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel.id,))
+
+
+--------------------------------------------------------------------------------
+CATEGORY 8: UPSTASH REDIS CACHE OPERATIONS (`upstash`)
+--------------------------------------------------------------------------------
+
+1. Ping Upstash Redis REST API and return latency:
+   nym eval await upstash.ping()
 
 2. Get last bot heartbeat timestamp from Upstash:
-   !eval await upstash.get("nym:bot_heartbeat")
+   nym eval await upstash.get("nym:bot_heartbeat")
 
-3. Set custom key in Upstash Redis with 1-hour expiration:
-   !eval await upstash.set("nym:custom_key", "value_data", ex_seconds=3600)
+3. Get cached server prefix from Upstash:
+   nym eval await upstash.get(f"prefixes:{guild.id}")
 
-================================================================================
-CATEGORY 9: COG & EXTENSION RELOADING
-================================================================================
+4. Set custom key in Upstash Redis with 1-hour expiration (3600s):
+   nym eval await upstash.set("nym:custom_test", "active_data", ex_seconds=3600)
 
-1. Reload a specific cog on the fly (e.g. general cog):
-   !eval bot.reload_extension("src.cogs.general")
+5. Delete a key from Upstash Redis (set 1-second TTL):
+   nym eval await upstash.set("nym:custom_test", "", ex_seconds=1)
 
-2. Reload sticky messages cog:
-   !eval bot.reload_extension("src.cogs.sticky")
 
-3. Sync application slash commands:
-   !eval await bot.sync_commands()
+--------------------------------------------------------------------------------
+CATEGORY 9: COG & SYSTEM MANAGEMENT
+--------------------------------------------------------------------------------
 
-================================================================================
-CATEGORY 10: FILE ATTACHMENT SCRIPT EVALUATION (!evalfile)
-================================================================================
+1. Reload a specific cog dynamically (e.g. general cog):
+   nym eval bot.reload_extension("src.cogs.general")
 
-Attach any `.py` script to a Discord message with `!evalfile` as the comment:
+2. Reload sticky message engine cog:
+   nym eval bot.reload_extension("src.cogs.sticky")
 
-Example Script Content (`test_script.py`):
+3. Reload custom prefix cog:
+   nym eval bot.reload_extension("src.cogs.prefix")
+
+4. Sync application slash commands across Discord:
+   nym eval await bot.sync_commands()
+
+5. Update bot status / presence activity:
+   nym eval await bot.change_presence(activity=discord.Game("Nym Core v2.0"))
+
+
+--------------------------------------------------------------------------------
+CATEGORY 10: SCRIPT FILE EVALUATION (`!evalfile`)
+--------------------------------------------------------------------------------
+
+To execute long, complex multi-line scripts without typing them line-by-line:
+
+1. Create a `.py` file on your computer (e.g., `audit_script.py`):
 ```python
-print("--- RUNNING ADVANCED AUDIT SCRIPT ---")
-users = await db.fetch_all("SELECT * FROM users")
-print(f"Total database user records: {len(users)}")
-for u in users:
-    print(f"- User ID: {u['user_id']} | Username: {u['username']}")
+print("--- RUNNING FULL SYSTEM AUDIT ---")
+print(f"Guild Name: {guild.name} (ID: {guild.id})")
+print(f"Total Members: {guild.member_count}")
 
+# Check Database
+users = await db.fetch_all("SELECT * FROM users")
+print(f"Database user records: {len(users)}")
+
+# Check Upstash Redis
 heartbeat = await upstash.get("nym:bot_heartbeat")
 print(f"Upstash Heartbeat: {heartbeat}")
+
+# Send Summary Embed
+from src.utils.embeds import EmbedBuilder
+embed = EmbedBuilder.success("Audit Completed", f"Checked {len(users)} users & Redis heartbeat.")
+await channel.send(embed=embed)
 ```
 
-Execution:
-1. Drag and drop `test_script.py` into Discord channel.
-2. Type `!evalfile` as the message content and press Send.
-3. Nym will execute the attached script and return full telemetry!
+2. Drag and drop `audit_script.py` into Discord.
+3. Type `!evalfile` as the message comment and send.
+4. Nym executes the script and posts the complete output telemetry!
