@@ -16,6 +16,9 @@ class Settings:
     guild_id: Optional[int]
     db_path: str
     log_level: str
+    openrouter_key: Optional[str]
+    upstash_redis_rest_url: Optional[str]
+    upstash_redis_rest_token: Optional[str]
 
     @classmethod
     def load(cls) -> "Settings":
@@ -39,10 +42,18 @@ class Settings:
         db_path = os.getenv("DB_PATH", "nym.db").strip()
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
+        openrouter_key = os.getenv("OPENROUTER_KEY", "").strip() or None
+        upstash_redis_rest_url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip() or None
+        upstash_redis_rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip() or None
+
         return cls(
             discord_token=token,
             owner_id=owner_id,
             guild_id=guild_id,
             db_path=db_path,
             log_level=log_level,
+            openrouter_key=openrouter_key,
+            upstash_redis_rest_url=upstash_redis_rest_url,
+            upstash_redis_rest_token=upstash_redis_rest_token,
         )
+
