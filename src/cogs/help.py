@@ -31,6 +31,12 @@ class HelpCategorySelect(discord.ui.Select):
                 value="sticky",
             ),
             discord.SelectOption(
+                label="AutoDelete Engine",
+                description="Automatic message deletion by time intervals and filters.",
+                emoji="🗑️",
+                value="autodelete",
+            ),
+            discord.SelectOption(
                 label="System & Health",
                 description="Check latency, uptime, and database operational status.",
                 emoji="💚",
@@ -43,6 +49,7 @@ class HelpCategorySelect(discord.ui.Select):
                 value="eval",
             ),
         ]
+
         super().__init__(placeholder="🌸 Choose a command category...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -105,6 +112,19 @@ class HelpCategorySelect(discord.ui.Select):
             )
             embed.add_field(name="`/sticky <message>` / `nym sticky`", value="Set a sticky notice for the current channel.", inline=False)
             embed.add_field(name="`/unsticky` / `nym unsticky`", value="Remove the active sticky notice from this channel.", inline=False)
+
+        elif category == "autodelete":
+            embed = EmbedBuilder.base(
+                title="🗑️ AutoDelete Engine (EazyAutodelete)",
+                description="Automatically clean up channel posts after custom durations (e.g. 5m, 1h, 24h, 1w) or content filters.",
+                color=EmbedBuilder.COLOR_NEKOTINA,
+                author=user,
+            )
+            embed.add_field(name="`/autodelete set <duration> [channel] [filter]`", value="Set autodelete interval and filter (e.g. `5m`, `1h`, `24h`, `0` for instant).", inline=False)
+            embed.add_field(name="`/autodelete off [channel]`", value="Turn off autodelete in a channel.", inline=False)
+            embed.add_field(name="`/autodelete status [channel]`", value="Check active autodelete configuration.", inline=False)
+            embed.add_field(name="`!autodelete <duration>` / `nym autodelete <duration>`", value="Prefix command fallback for autodelete setup.", inline=False)
+
 
         elif category == "health":
             embed = EmbedBuilder.base(

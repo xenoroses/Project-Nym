@@ -64,7 +64,38 @@ class DatabaseManager:
             (896740108059959316, 456811056090578975)
         )
 
+        # Table: AutoDelete Configs
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS autodelete_configs (
+                channel_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                duration_seconds INTEGER DEFAULT 3600,
+                filter_mode TEXT DEFAULT 'all',
+                exempt_pinned INTEGER DEFAULT 1,
+                exempt_bots INTEGER DEFAULT 1,
+                exempt_admins INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Table: AutoDelete Queue
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS autodelete_queue (
+                message_id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                delete_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         await self._db.commit()
+
 
 
 
