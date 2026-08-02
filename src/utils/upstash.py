@@ -69,7 +69,17 @@ class UpstashRedis:
                 return data.get("result")
             return None
 
+    async def delete(self, key: str) -> bool:
+        """Delete key from Upstash Redis."""
+        if not self.is_configured:
+            return False
+
+        session = await self._get_session()
+        async with session.post(f"{self.url}/del/{key}") as response:
+            return response.status == 200
+
     async def close(self) -> None:
         """Close HTTP session."""
         if self._session and not self._session.closed:
             await self._session.close()
+

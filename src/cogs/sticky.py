@@ -43,7 +43,10 @@ class StickyCog(commands.Cog):
             try:
                 raw_data = await self.bot.upstash.get(key)
                 if raw_data:
-                    return json.loads(raw_data)
+                    parsed = json.loads(raw_data)
+                    if isinstance(parsed, dict) and parsed.get("message"):
+                        return parsed
+                    return None
             except Exception as e:
                 logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
 
@@ -53,7 +56,7 @@ class StickyCog(commands.Cog):
                 "SELECT message, last_message_id FROM sticky_messages WHERE channel_id = ?",
                 (channel_id,)
             )
-            if row:
+            if row and row["message"]:
                 data = {"message": row["message"], "last_id": row["last_message_id"]}
                 # Warm up Upstash cache if available
                 if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
@@ -99,10 +102,10 @@ class StickyCog(commands.Cog):
         # Delete from Upstash Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
-                # Overwrite key with empty or setting 1 second TTL
-                await self.bot.upstash.set(key, "", ex_seconds=1)
+                await self.bot.upstash.delete(key)
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel_id}: {e}")
+
 
     # --- Commands ---
 
