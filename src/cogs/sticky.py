@@ -44,8 +44,11 @@ class StickyCog(commands.Cog):
                 raw_data = await self.bot.upstash.get(key)
                 if raw_data:
                     parsed = json.loads(raw_data)
-                    if isinstance(parsed, dict) and parsed.get("message"):
-                        return parsed
+                    if isinstance(parsed, dict):
+                        if parsed.get("disabled"):
+                            return None
+                        if parsed.get("message"):
+                            return parsed
                     return None
             except Exception as e:
                 logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
@@ -99,13 +102,13 @@ class StickyCog(commands.Cog):
         # Delete from SQLite
         await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel_id,))
 
-        # Delete from Upstash Redis
+        # Delete from Upstash Redis (set explicit disabled flag to bust any stale cache)
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.delete(key)
+                await self.bot.upstash.set(key, json.dumps({"disabled": True}), ex_seconds=86400)
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel_id}: {e}")
-
 
     # --- Commands ---
 
@@ -113,12 +116,13 @@ class StickyCog(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def sticky_slash(self, ctx: discord.ApplicationContext, message: str):
         """Slash command to set a sticky notice in the channel."""
-        await self._set_sticky_data(
-            channel_id=ctx.channel.id,
-            guild_id=ctx.guild.id,
-            message_text=message,
-            last_id=None
-        )
+        async with self.channel_locks[ctx.channel.id]:
+            await self._set_sticky_data(
+                channel_id=ctx.channel.id,
+                guild_id=ctx.guild.id,
+                message_text=message,
+                last_id=None
+            )
 
         embed = EmbedBuilder.success(
             title="Sticky Message Set",
@@ -130,25 +134,25 @@ class StickyCog(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     async def unsticky_slash(self, ctx: discord.ApplicationContext):
         """Slash command to remove a sticky message from the channel."""
-        data = await self._get_sticky_data(ctx.channel.id)
+        async with self.channel_locks[ctx.channel.id]:
+            data = await self._get_sticky_data(ctx.channel.id)
 
-        if not data:
-            embed = EmbedBuilder.warning(
-                title="No Sticky Message",
-                description="There is no active sticky message configured in this channel."
-            )
-            return await ctx.respond(embed=embed, ephemeral=True)
+            if not data:
+                embed = EmbedBuilder.warning(
+                    title="No Sticky Message",
+                    description="There is no active sticky message configured in this channel."
+                )
+                return await ctx.respond(embed=embed, ephemeral=True)
 
-        # Delete old message if present
-        last_id = data.get("last_id")
-        if last_id:
-            try:
-                old_msg = await ctx.channel.fetch_message(last_id)
-                await old_msg.delete()
-            except Exception:
-                pass
+            last_id = data.get("last_id")
+            await self._delete_sticky_data(ctx.channel.id)
 
-        await self._delete_sticky_data(ctx.channel.id)
+            if last_id:
+                try:
+                    old_msg = await ctx.channel.fetch_message(last_id)
+                    await old_msg.delete()
+                except Exception:
+                    pass
 
         embed = EmbedBuilder.success(
             title="Sticky Message Removed",
@@ -161,32 +165,35 @@ class StickyCog(commands.Cog):
     @commands.command(name="sticky")
     @commands.has_permissions(manage_channels=True)
     async def sticky_prefix(self, ctx: commands.Context, *, message: str):
-        """Prefix command fallback (!sticky <message>)."""
-        await self._set_sticky_data(
-            channel_id=ctx.channel.id,
-            guild_id=ctx.guild.id,
-            message_text=message,
-            last_id=None
-        )
+        """Prefix command fallback (!sticky <message> / nym sticky <message>)."""
+        async with self.channel_locks[ctx.channel.id]:
+            await self._set_sticky_data(
+                channel_id=ctx.channel.id,
+                guild_id=ctx.guild.id,
+                message_text=message,
+                last_id=None
+            )
         await ctx.send("✧ Sticky message protocol engaged.")
 
     @commands.command(name="unsticky")
     @commands.has_permissions(manage_channels=True)
     async def unsticky_prefix(self, ctx: commands.Context):
-        """Prefix command fallback (!unsticky)."""
-        data = await self._get_sticky_data(ctx.channel.id)
-        if not data:
-            return await ctx.send("⚠️ No active sticky message found in this channel.")
+        """Prefix command fallback (!unsticky / nym unsticky)."""
+        async with self.channel_locks[ctx.channel.id]:
+            data = await self._get_sticky_data(ctx.channel.id)
+            if not data:
+                return await ctx.send("⚠️ No active sticky message found in this channel.")
 
-        last_id = data.get("last_id")
-        if last_id:
-            try:
-                old_msg = await ctx.channel.fetch_message(last_id)
-                await old_msg.delete()
-            except Exception:
-                pass
+            last_id = data.get("last_id")
+            await self._delete_sticky_data(ctx.channel.id)
 
-        await self._delete_sticky_data(ctx.channel.id)
+            if last_id:
+                try:
+                    old_msg = await ctx.channel.fetch_message(last_id)
+                    await old_msg.delete()
+                except Exception:
+                    pass
+
         await ctx.send("⌬ Sticky message removed from this channel.")
 
     # --- Event Listener ---
@@ -197,8 +204,13 @@ class StickyCog(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
+        # Skip reposting if the message itself is a sticky/unsticky command invocation
+        content_lower = message.content.lower().strip()
+        if "unsticky" in content_lower or "sticky" in content_lower:
+            return
+
         data = await self._get_sticky_data(message.channel.id)
-        if not data:
+        if not data or data.get("disabled"):
             return
 
         sticky_text = data.get("message")
@@ -215,10 +227,14 @@ class StickyCog(commands.Cog):
         async with self.channel_locks[message.channel.id]:
             # Re-fetch data inside lock to avoid double execution
             current_data = await self._get_sticky_data(message.channel.id)
-            if not current_data:
+            if not current_data or current_data.get("disabled"):
                 return
 
             current_last_id = current_data.get("last_id")
+            sticky_text = current_data.get("message")
+
+            if not sticky_text:
+                return
 
             # Delete previous sticky message
             if current_last_id:
@@ -233,7 +249,6 @@ class StickyCog(commands.Cog):
                 new_msg = await message.channel.send(sticky_text)
 
                 # Update last_id
-
                 await self._set_sticky_data(
                     channel_id=message.channel.id,
                     guild_id=message.guild.id,

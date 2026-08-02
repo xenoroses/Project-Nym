@@ -10,6 +10,7 @@ import logging
 import asyncio
 import datetime
 import traceback
+import textwrap
 from contextlib import redirect_stdout
 from typing import Optional, Union, Any
 
@@ -34,7 +35,7 @@ class EvalCog(commands.Cog):
         self.bot = bot
 
     def _clean_code(self, code: str) -> str:
-        """Clean markdown formatting and codeblocks from code input."""
+        """Clean markdown formatting, codeblocks, and uneven leading indentation."""
         code = code.strip()
         if code.startswith("```"):
             lines = code.split("\n")
@@ -42,8 +43,8 @@ class EvalCog(commands.Cog):
                 lines = lines[1:]
             if lines and lines[-1].startswith("```"):
                 lines = lines[:-1]
-            return "\n".join(lines).strip()
-        return code
+            code = "\n".join(lines)
+        return textwrap.dedent(code).strip()
 
     def _wrap_code(self, code: str) -> ast.Module:
         """Parses and wraps code in an async function, transforming the last expression to a return statement."""
