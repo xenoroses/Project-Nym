@@ -118,39 +118,62 @@ class EvalCog(commands.Cog):
         except Exception as e:
             logger.warning(f"Failed to send eval response: {e}")
 
+    def _format_single_item(self, item: Any) -> str:
+        """Helper to format individual Discord or Python objects cleanly."""
+        if isinstance(item, discord.Message):
+            return f"`Message` (`ID: {item.id}`)"
+        if isinstance(item, discord.abc.GuildChannel):
+            return f"📁 `{item.name}` (`ID: {item.id}`)"
+        if isinstance(item, (discord.Member, discord.User)):
+            return f"👤 `{item.name}` (`ID: {item.id}`)"
+        if isinstance(item, discord.Role):
+            return f"🏷️ `{item.name}` (`ID: {item.id}`)"
+        if isinstance(item, discord.Embed):
+            return f"🖼️ `Embed` (**{item.title or 'No Title'}**)"
+        return repr(item)
+
     def _format_eval_result(self, result: Any) -> Optional[str]:
         """Format return values cleanly with Nekotina aesthetics."""
         if result is None:
             return None
 
-        # Clean formatting for discord.Message objects
+        # Clean formatting for single Discord Objects
         if isinstance(result, discord.Message):
             return f"📤 `Message Sent` (ID: `{result.id}` | Channel: {result.channel.mention})"
-
-        # Clean formatting for discord.Embed objects
+        if isinstance(result, discord.abc.GuildChannel):
+            return f"📁 Channel **{result.name}** (ID: `{result.id}`)"
         if isinstance(result, discord.Embed):
             return f"🖼️ `discord.Embed` (Title: **{result.title or 'No Title'}**)"
-
-        # Clean formatting for discord.Member / User
         if isinstance(result, (discord.Member, discord.User)):
             return f"👤 `{result.name}` (ID: `{result.id}`)"
-
-        # Clean formatting for discord.Guild
         if isinstance(result, discord.Guild):
             return f"🏰 `{result.name}` (ID: `{result.id}`)"
 
-        # Clean formatting for dict / list
-        if isinstance(result, (dict, list)):
+        # Clean formatting for Lists, Sets, and Tuples
+        if isinstance(result, (list, set, tuple)):
+            items = list(result)
+            total = len(items)
+            if total == 0:
+                return "```py\n[] (Empty List)\n```"
+
+            formatted_items = [self._format_single_item(x) for x in items[:6]]
+            summary = "\n".join(f"• {item}" for item in formatted_items)
+            if total > 6:
+                summary += f"\n*... and {total - 6} more items (Total: {total}).*"
+            return f"📋 **Batch Operation Result ({total} items):**\n{summary}"
+
+        # Clean formatting for Dicts
+        if isinstance(result, dict):
             try:
                 formatted = json.dumps(result, indent=2, default=str)
-                if len(formatted) < 1000:
+                if len(formatted) < 800:
                     return f"```json\n{formatted}\n```"
             except Exception:
                 pass
 
         repr_str = repr(result)
-        if len(repr_str) > 1000:
-            repr_str = repr_str[:997] + "..."
+        if len(repr_str) > 800:
+            repr_str = repr_str[:797] + "..."
 
         return f"```py\n{repr_str}\n```"
 
@@ -237,17 +260,17 @@ class EvalCog(commands.Cog):
 
             embed.add_field(name="⏱️ Execution Latency", value=f"`{execution_time} ms`", inline=True)
 
-            # Attachment fallback if total content is huge
-            total_content_len = len(stdout_str) + (len(str(result)) if result else 0)
-            if total_content_len > 1800:
+            # Attachment fallback ONLY if stdout itself is huge
+            if len(stdout_str) > 1800:
                 full_log = f"--- EVALUATION TELEMETRY ---\nExecution Time: {execution_time} ms\n\n--- STDOUT ---\n{stdout_str}\n\n--- RETURN ---\n{repr(result)}"
                 file = discord.File(
                     io.BytesIO(full_log.encode("utf-8")),
-                    filename=f"eval_telemetry_{int(time.time())}.txt"
+                    filename=f"eval_stdout_{int(time.time())}.txt"
                 )
                 await self._reply(ctx, embed, file=file)
             else:
                 await self._reply(ctx, embed)
+
 
         except Exception as e:
             execution_time = round((time.perf_counter() - start_time) * 1000, 2)
