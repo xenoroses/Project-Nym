@@ -4,6 +4,8 @@ import discord
 from discord.ext import commands
 from src.config.settings import Settings
 from src.database.db import DatabaseManager
+from src.utils.upstash import UpstashRedis
+from src.utils.health_server import HealthServer
 
 logger = logging.getLogger("Nym")
 
@@ -24,27 +26,38 @@ class NymBot(commands.Bot):
 
         self.settings = settings
         self.db = DatabaseManager(db_path=settings.db_path)
+        self.upstash = UpstashRedis(
+            rest_url=settings.upstash_redis_rest_url,
+            rest_token=settings.upstash_redis_rest_token,
+        )
+        self.health_server = HealthServer()
 
     async def start(self, token: str, *, reconnect: bool = True) -> None:
-        """Connect to database, load cogs and events, then start bot execution."""
+        """Connect to database, start HTTP health server, load cogs and events, then start bot execution."""
         # 1. Connect to SQLite database
         await self.db.connect()
 
-        # 2. Auto-load all cogs from src/cogs/
+        # 2. Start HTTP health check server for Render & uptime monitoring
+        await self.health_server.start()
+
+        # 3. Auto-load all cogs from src/cogs/
         self._load_extensions_from_dir("src/cogs", "src.cogs")
 
-        # 3. Auto-load all event listeners from src/events/
+        # 4. Auto-load all event listeners from src/events/
         self._load_extensions_from_dir("src/events", "src.events")
 
-        # 4. Start Discord bot client
+        # 5. Start Discord bot client
         logger.info("Starting Nym Discord client...")
         await super().start(token, reconnect=reconnect)
 
     async def close(self) -> None:
-        """Gracefully shut down database connections and bot client."""
+        """Gracefully shut down database connections, health server, and bot client."""
         logger.info("Shutting down Nym Bot...")
+        await self.health_server.stop()
+        await self.upstash.close()
         await self.db.close()
         await super().close()
+
 
     def _load_extensions_from_dir(self, dir_path: str, module_prefix: str) -> None:
         """Scan directory and dynamically load extension modules."""

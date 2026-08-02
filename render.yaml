@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: project-nym
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    autoDeploy: true
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: OPENROUTER_KEY
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: PORT
+        value: 10000
+      - key: DB_PATH
+        value: nym.db
+      - key: LOG_LEVEL
+        value: INFO
