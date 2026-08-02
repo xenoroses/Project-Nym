@@ -56,9 +56,10 @@ To ensure Render never puts your bot to sleep after 15 minutes of inactivity:
 3. Settings:
    - **Monitor Type**: HTTP(s)
    - **Friendly Name**: `Nym Bot Health Check`
-   - **URL**: `https://<your-render-app-name>.onrender.com/health`
+   - **URL**: `https://project-nym.onrender.com/health`
    - **Monitoring Interval**: Every `5 minutes` or `10 minutes`
 4. Click **Create Monitor**.
+
 
 🎉 **That's it!**
 Your bot will now:
