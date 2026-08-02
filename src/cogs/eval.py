@@ -88,15 +88,43 @@ class EvalCog(commands.Cog):
         ast.fix_missing_locations(module)
         return module
 
+    async def _reply(
+        self,
+        ctx: Union[discord.ApplicationContext, commands.Context],
+        embed: discord.Embed,
+        file: Optional[discord.File] = None,
+    ) -> None:
+        """Safely send evaluation output to context, fallback to DM if channel is deleted/not found."""
+        try:
+            if isinstance(ctx, discord.ApplicationContext):
+                if file:
+                    await ctx.respond(embed=embed, file=file, ephemeral=True)
+                else:
+                    await ctx.respond(embed=embed, ephemeral=True)
+            else:
+                if file:
+                    await ctx.send(embed=embed, file=file)
+                else:
+                    await ctx.send(embed=embed)
+        except discord.NotFound:
+            # Channel was deleted or context is unknown, fallback to DMing author
+            try:
+                if file:
+                    await ctx.author.send(embed=embed, file=file)
+                else:
+                    await ctx.author.send(embed=embed)
+            except Exception as e:
+                logger.warning(f"Could not send eval output to channel or DM: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to send eval response: {e}")
+
     async def _execute_eval(self, ctx: Union[discord.ApplicationContext, commands.Context], code: str):
         """Core evaluation engine executing Python code in an async sandbox."""
         code = self._clean_code(code)
 
         if not code:
             embed = EmbedBuilder.warning("No Code Provided", "Please provide valid Python code to evaluate.")
-            if isinstance(ctx, discord.ApplicationContext):
-                return await ctx.respond(embed=embed, ephemeral=True)
-            return await ctx.send(embed=embed)
+            return await self._reply(ctx, embed)
 
         stdout = io.StringIO()
         start_time = time.perf_counter()
@@ -174,19 +202,13 @@ class EvalCog(commands.Cog):
                     title="⚡ Evaluation Completed",
                     description=f"Output exceeded character limit. Full telemetry attached.\n**Execution Time:** `{execution_time} ms`"
                 )
-                if isinstance(ctx, discord.ApplicationContext):
-                    await ctx.respond(embed=embed, file=file, ephemeral=True)
-                else:
-                    await ctx.send(embed=embed, file=file)
+                await self._reply(ctx, embed, file=file)
             else:
                 embed = EmbedBuilder.success(
                     title="⚡ Evaluation Completed",
                     description=f"{response_text}\n\n**Execution Time:** `{execution_time} ms`"
                 )
-                if isinstance(ctx, discord.ApplicationContext):
-                    await ctx.respond(embed=embed, ephemeral=True)
-                else:
-                    await ctx.send(embed=embed)
+                await self._reply(ctx, embed)
 
         except Exception as e:
             execution_time = round((time.perf_counter() - start_time) * 1000, 2)
@@ -205,16 +227,10 @@ class EvalCog(commands.Cog):
                     io.BytesIO(err_traceback.encode("utf-8")),
                     filename=f"eval_error_{int(time.time())}.log"
                 )
-                if isinstance(ctx, discord.ApplicationContext):
-                    await ctx.respond(embed=embed, file=file, ephemeral=True)
-                else:
-                    await ctx.send(embed=embed, file=file)
+                await self._reply(ctx, embed, file=file)
             else:
                 embed.description += f"\n**Traceback:**\n```py\n{err_traceback[:1000]}\n```"
-                if isinstance(ctx, discord.ApplicationContext):
-                    await ctx.respond(embed=embed, ephemeral=True)
-                else:
-                    await ctx.send(embed=embed)
+                await self._reply(ctx, embed)
 
 
     # --- Commands ---
