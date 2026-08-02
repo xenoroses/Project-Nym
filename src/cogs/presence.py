@@ -14,31 +14,32 @@ class PresenceCog(commands.Cog):
             "status": discord.Status.idle,
             "activity": discord.Activity(
                 type=discord.ActivityType.watching,
-                name="over Zen's domain 🌸 | Destined to be Zen's~"
+                name="over Zen's domain 🌸"
             )
         },
         {
             "status": discord.Status.dnd,
             "activity": discord.Activity(
                 type=discord.ActivityType.watching,
-                name="Zen's starry realm ✨ | Bound to Zen's soul"
+                name="Zen's starry realm ✨"
             )
         },
         {
             "status": discord.Status.online,
             "activity": discord.Activity(
                 type=discord.ActivityType.watching,
-                name="Zen's subtle whispers 💫 | Forever Zen's~"
+                name="Zen's subtle whispers 💫"
             )
         },
         {
             "status": discord.Status.idle,
             "activity": discord.Activity(
                 type=discord.ActivityType.watching,
-                name="Zen's peaceful sanctuary 🌙 | Destined to be Zen's~"
+                name="Zen's peaceful sanctuary 🌙"
             )
         },
     ]
+
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
