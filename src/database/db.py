@@ -36,19 +36,21 @@ class DatabaseManager:
             """
         )
 
-        # Example Table: User Stats / Analytics
+        # Table: Sticky Messages
         await self._db.execute(
             """
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT NOT NULL,
-                commands_used INTEGER DEFAULT 0,
-                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS sticky_messages (
+                channel_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                last_message_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
 
         await self._db.commit()
+
 
     async def close(self) -> None:
         """Close the database connection gracefully."""

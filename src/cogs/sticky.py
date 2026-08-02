@@ -1,0 +1,248 @@
+import asyncio
+import json
+import logging
+from collections import defaultdict
+from typing import Optional, Union
+import discord
+from discord.ext import commands, tasks
+from src.utils.embeds import EmbedBuilder
+
+logger = logging.getLogger("Nym")
+
+
+class StickyCog(commands.Cog):
+    """Premium Sticky Message Engine.
+
+    Ensures persistent visibility of critical channel notices even in high-traffic channels.
+    Supports dual-tier caching (Upstash Redis + SQLite database persistence).
+    """
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.channel_locks = defaultdict(asyncio.Lock)
+        self.prune_trackers.start()
+
+    def cog_unload(self):
+        self.prune_trackers.cancel()
+
+    @tasks.loop(hours=24)
+    async def prune_trackers(self):
+        """Clean up stale channel locks every 24 hours."""
+        for channel_id in list(self.channel_locks.keys()):
+            if not self.bot.get_channel(channel_id):
+                del self.channel_locks[channel_id]
+
+    # --- Storage Helpers (Upstash Redis + SQLite) ---
+
+    async def _get_sticky_data(self, channel_id: int) -> Optional[dict]:
+        """Fetch sticky message data from Upstash Redis or SQLite fallback."""
+        key = f"sticky:{channel_id}"
+
+        # 1. Try Upstash Redis
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                raw_data = await self.bot.upstash.get(key)
+                if raw_data:
+                    return json.loads(raw_data)
+            except Exception as e:
+                logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
+
+        # 2. Fallback to SQLite DB
+        try:
+            row = await self.bot.db.fetch_one(
+                "SELECT message, last_message_id FROM sticky_messages WHERE channel_id = ?",
+                (channel_id,)
+            )
+            if row:
+                data = {"message": row["message"], "last_id": row["last_message_id"]}
+                # Warm up Upstash cache if available
+                if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+                    await self.bot.upstash.set(key, json.dumps(data))
+                return data
+        except Exception as e:
+            logger.error(f"SQLite read error for sticky:{channel_id}: {e}")
+
+        return None
+
+    async def _set_sticky_data(self, channel_id: int, guild_id: int, message_text: str, last_id: Optional[int] = None) -> None:
+        """Save sticky message data to both SQLite DB and Upstash Redis."""
+        key = f"sticky:{channel_id}"
+        data = {"message": message_text, "last_id": last_id}
+        json_str = json.dumps(data)
+
+        # 1. Save to SQLite
+        await self.bot.db.execute(
+            """
+            INSERT INTO sticky_messages (channel_id, guild_id, message, last_message_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET
+                message = excluded.message,
+                last_message_id = excluded.last_message_id
+            """,
+            (channel_id, guild_id, message_text, last_id)
+        )
+
+        # 2. Save to Upstash Redis
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                await self.bot.upstash.set(key, json_str)
+            except Exception as e:
+                logger.warning(f"Upstash Redis set failed for sticky:{channel_id}: {e}")
+
+    async def _delete_sticky_data(self, channel_id: int) -> None:
+        """Remove sticky message from both SQLite DB and Upstash Redis."""
+        key = f"sticky:{channel_id}"
+
+        # Delete from SQLite
+        await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel_id,))
+
+        # Delete from Upstash Redis
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                # Overwrite key with empty or setting 1 second TTL
+                await self.bot.upstash.set(key, "", ex_seconds=1)
+            except Exception as e:
+                logger.warning(f"Upstash Redis delete failed for sticky:{channel_id}: {e}")
+
+    # --- Commands ---
+
+    @discord.slash_command(name="sticky", description="Set a sticky message for this channel.")
+    @commands.has_permissions(manage_channels=True)
+    async def sticky_slash(self, ctx: discord.ApplicationContext, message: str):
+        """Slash command to set a sticky notice in the channel."""
+        await ctx.defer(ephemeral=True)
+
+        await self._set_sticky_data(
+            channel_id=ctx.channel.id,
+            guild_id=ctx.guild.id,
+            message_text=message,
+            last_id=None
+        )
+
+        embed = EmbedBuilder.success(
+            title="Sticky Message Set",
+            description=f"✧ Sticky message protocol engaged for {ctx.channel.mention}.\n\n**Notice:**\n>>> {message}"
+        )
+        await ctx.respond(embed=embed, ephemeral=True)
+
+    @discord.slash_command(name="unsticky", description="Remove the sticky message from this channel.")
+    @commands.has_permissions(manage_channels=True)
+    async def unsticky_slash(self, ctx: discord.ApplicationContext):
+        """Slash command to remove a sticky message from the channel."""
+        await ctx.defer(ephemeral=True)
+
+        data = await self._get_sticky_data(ctx.channel.id)
+        if not data:
+            embed = EmbedBuilder.warning(
+                title="No Sticky Message",
+                description="There is no active sticky message configured in this channel."
+            )
+            return await ctx.respond(embed=embed, ephemeral=True)
+
+        # Delete old message if present
+        last_id = data.get("last_id")
+        if last_id:
+            try:
+                old_msg = await ctx.channel.fetch_message(last_id)
+                await old_msg.delete()
+            except Exception:
+                pass
+
+        await self._delete_sticky_data(ctx.channel.id)
+
+        embed = EmbedBuilder.success(
+            title="Sticky Message Removed",
+            description=f"⌬ Sticky message protocol disengaged for {ctx.channel.mention}."
+        )
+        await ctx.respond(embed=embed, ephemeral=True)
+
+    # --- Prefix Command Fallbacks ---
+
+    @commands.command(name="sticky")
+    @commands.has_permissions(manage_channels=True)
+    async def sticky_prefix(self, ctx: commands.Context, *, message: str):
+        """Prefix command fallback (!sticky <message>)."""
+        await self._set_sticky_data(
+            channel_id=ctx.channel.id,
+            guild_id=ctx.guild.id,
+            message_text=message,
+            last_id=None
+        )
+        await ctx.send("✧ Sticky message protocol engaged.")
+
+    @commands.command(name="unsticky")
+    @commands.has_permissions(manage_channels=True)
+    async def unsticky_prefix(self, ctx: commands.Context):
+        """Prefix command fallback (!unsticky)."""
+        data = await self._get_sticky_data(ctx.channel.id)
+        if not data:
+            return await ctx.send("⚠️ No active sticky message found in this channel.")
+
+        last_id = data.get("last_id")
+        if last_id:
+            try:
+                old_msg = await ctx.channel.fetch_message(last_id)
+                await old_msg.delete()
+            except Exception:
+                pass
+
+        await self._delete_sticky_data(ctx.channel.id)
+        await ctx.send("⌬ Sticky message removed from this channel.")
+
+    # --- Event Listener ---
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """Listens for new messages and re-posts the sticky notice at the bottom."""
+        if message.author.bot or not message.guild:
+            return
+
+        data = await self._get_sticky_data(message.channel.id)
+        if not data:
+            return
+
+        sticky_text = data.get("message")
+        last_id = data.get("last_id")
+
+        if not sticky_text:
+            return
+
+        # Avoid resending if the last message was already our sticky message
+        if message.channel.last_message_id == last_id:
+            return
+
+        # Acquire lock per channel to prevent duplicate sticky posts
+        async with self.channel_locks[message.channel.id]:
+            # Re-fetch data inside lock to avoid double execution
+            current_data = await self._get_sticky_data(message.channel.id)
+            if not current_data:
+                return
+
+            current_last_id = current_data.get("last_id")
+
+            # Delete previous sticky message
+            if current_last_id:
+                try:
+                    old_msg = await message.channel.fetch_message(current_last_id)
+                    await old_msg.delete()
+                except Exception:
+                    pass
+
+            # Post new sticky message
+            try:
+                formatted_notice = f"📌 **Sticky Notice:**\n{sticky_text}"
+                new_msg = await message.channel.send(formatted_notice)
+
+                # Update last_id
+                await self._set_sticky_data(
+                    channel_id=message.channel.id,
+                    guild_id=message.guild.id,
+                    message_text=sticky_text,
+                    last_id=new_msg.id
+                )
+            except Exception as e:
+                logger.error(f"Failed to post sticky message in channel {message.channel.id}: {e}")
+
+
+def setup(bot: commands.Bot):
+    bot.add_cog(StickyCog(bot))
