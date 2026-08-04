@@ -203,8 +203,42 @@ class HelpCog(commands.Cog):
         embed = view.select._build_category_embed("overview", ctx.author)
         await ctx.respond(embed=embed, view=view)
 
+    @discord.slash_command(name="privacy", description="View Nym Bot's official Privacy Policy & Data Usage Terms.")
+    async def privacy_command(self, ctx: discord.ApplicationContext):
+        """Slash command displaying bot privacy policy and data usage terms."""
+        embed = EmbedBuilder.info(
+            title="🔒 Nym Privacy Policy & Data Usage",
+            description=(
+                "Nym respects your privacy and collects zero sensitive personal data.\n\n"
+                "**Data Handling:**\n"
+                "• **No Chat Logging:** Message contents are evaluated in-memory for commands/filters and never saved.\n"
+                "• **Operational Settings Only:** Server command prefixes, sticky messages, and autodelete timers are stored in private databases.\n"
+                "• **Zero Third-Party Sharing:** No data is sold, shared, or used for AI training.\n\n"
+                "📄 **Official Privacy Policy:**\n"
+                "https://github.com/xenoroses/Project-Nym/blob/main/PRIVACY_POLICY.md"
+            ),
+            footer="Nym Bot • Privacy & Security Standards",
+        )
+        await ctx.respond(embed=embed)
+
+    @commands.command(name="privacy")
+    async def privacy_prefix(self, ctx: commands.Context):
+        """Prefix command fallback (!privacy / nym privacy)."""
+        embed = EmbedBuilder.info(
+            title="🔒 Nym Privacy Policy & Data Usage",
+            description=(
+                "Nym respects your privacy and collects zero sensitive personal data.\n\n"
+                "**Data Handling:**\n"
+                "• **No Chat Logging:** Message contents are evaluated in-memory for commands/filters and never saved.\n"
+                "• **Operational Settings Only:** Server command prefixes, sticky messages, and autodelete timers are stored in private databases.\n"
+                "• **Zero Third-Party Sharing:** No data is sold, shared, or used for AI training.\n\n"
+                "📄 **Official Privacy Policy:**\n"
+                "https://github.com/xenoroses/Project-Nym/blob/main/PRIVACY_POLICY.md"
+            ),
+            footer="Nym Bot • Privacy & Security Standards",
+        )
+        await ctx.send(embed=embed)
+
 
 def setup(bot: commands.Bot):
-    # Disable default Py-Cord text help command to prevent duplication
-    bot.help_command = None
     bot.add_cog(HelpCog(bot))
