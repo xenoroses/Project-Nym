@@ -14,7 +14,7 @@ class StickyCog(commands.Cog):
     """Premium Sticky Message Engine.
 
     Ensures persistent visibility of critical channel notices even in high-traffic channels.
-    Supports dual-tier caching (Upstash Redis + SQLite database persistence).
+    Supports dual-tier caching (Upstash Redis + SQLite database persistence) and optional rich embed formatting.
     """
 
     def __init__(self, bot: commands.Bot):
@@ -56,11 +56,16 @@ class StickyCog(commands.Cog):
         # 2. Fallback to SQLite DB
         try:
             row = await self.bot.db.fetch_one(
-                "SELECT message, last_message_id FROM sticky_messages WHERE channel_id = ?",
+                "SELECT message, is_embed, last_message_id FROM sticky_messages WHERE channel_id = ?",
                 (channel_id,)
             )
             if row and row["message"]:
-                data = {"message": row["message"], "last_id": row["last_message_id"]}
+                is_embed = bool(row["is_embed"]) if "is_embed" in row.keys() and row["is_embed"] else False
+                data = {
+                    "message": row["message"],
+                    "is_embed": is_embed,
+                    "last_id": row["last_message_id"]
+                }
                 # Warm up Upstash cache if available
                 if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
                     await self.bot.upstash.set(key, json.dumps(data))
@@ -70,22 +75,34 @@ class StickyCog(commands.Cog):
 
         return None
 
-    async def _set_sticky_data(self, channel_id: int, guild_id: int, message_text: str, last_id: Optional[int] = None) -> None:
+    async def _set_sticky_data(
+        self,
+        channel_id: int,
+        guild_id: int,
+        message_text: str,
+        is_embed: bool = False,
+        last_id: Optional[int] = None
+    ) -> None:
         """Save sticky message data to both SQLite DB and Upstash Redis."""
         key = f"sticky:{channel_id}"
-        data = {"message": message_text, "last_id": last_id}
+        data = {
+            "message": message_text,
+            "is_embed": is_embed,
+            "last_id": last_id
+        }
         json_str = json.dumps(data)
 
         # 1. Save to SQLite
         await self.bot.db.execute(
             """
-            INSERT INTO sticky_messages (channel_id, guild_id, message, last_message_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO sticky_messages (channel_id, guild_id, message, is_embed, last_message_id)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(channel_id) DO UPDATE SET
                 message = excluded.message,
+                is_embed = excluded.is_embed,
                 last_message_id = excluded.last_message_id
             """,
-            (channel_id, guild_id, message_text, last_id)
+            (channel_id, guild_id, message_text, 1 if is_embed else 0, last_id)
         )
 
         # 2. Save to Upstash Redis
@@ -110,23 +127,43 @@ class StickyCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel_id}: {e}")
 
+    async def _send_sticky(self, channel: discord.TextChannel, message_text: str, is_embed: bool) -> discord.Message:
+        """Helper to post the sticky message as an embed or plain text."""
+        if is_embed:
+            embed = EmbedBuilder.base(
+                title="📌 Sticky Notice",
+                description=message_text,
+                color=EmbedBuilder.COLOR_NEKOTINA
+            )
+            return await channel.send(embed=embed)
+        return await channel.send(message_text)
+
     # --- Commands ---
 
     @discord.slash_command(name="sticky", description="Set a sticky message for this channel.")
     @commands.has_permissions(manage_channels=True)
-    async def sticky_slash(self, ctx: discord.ApplicationContext, message: str):
+    async def sticky_slash(
+        self,
+        ctx: discord.ApplicationContext,
+        message: str = discord.Option(description="The sticky notice message"),
+        as_embed: bool = discord.Option(description="Format the sticky message as a rich embed?", default=False)
+    ):
         """Slash command to set a sticky notice in the channel."""
         async with self.channel_locks[ctx.channel.id]:
             await self._set_sticky_data(
                 channel_id=ctx.channel.id,
                 guild_id=ctx.guild.id,
                 message_text=message,
+                is_embed=as_embed,
                 last_id=None
             )
 
+        format_type = "Rich Embed" if as_embed else "Plain Text"
         embed = EmbedBuilder.success(
             title="Sticky Message Set",
-            description=f"✧ Sticky message protocol engaged for {ctx.channel.mention}.\n\n**Notice:**\n>>> {message}"
+            description=f"✧ Sticky message protocol engaged for {ctx.channel.mention}.\n\n"
+                        f"**Format:** `{format_type}`\n"
+                        f"**Notice:**\n>>> {message}"
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
@@ -165,15 +202,32 @@ class StickyCog(commands.Cog):
     @commands.command(name="sticky")
     @commands.has_permissions(manage_channels=True)
     async def sticky_prefix(self, ctx: commands.Context, *, message: str):
-        """Prefix command fallback (!sticky <message> / nym sticky <message>)."""
+        """Prefix command fallback (!sticky <message> / !sticky -embed <message> / nym sticky <message>)."""
+        is_embed = False
+        message_clean = message.strip()
+
+        # Check for embed flags: -embed, --embed, or embed
+        if message_clean.startswith("-embed "):
+            is_embed = True
+            message_clean = message_clean[7:].strip()
+        elif message_clean.startswith("--embed "):
+            is_embed = True
+            message_clean = message_clean[8:].strip()
+        elif message_clean.startswith("embed "):
+            is_embed = True
+            message_clean = message_clean[6:].strip()
+
         async with self.channel_locks[ctx.channel.id]:
             await self._set_sticky_data(
                 channel_id=ctx.channel.id,
                 guild_id=ctx.guild.id,
-                message_text=message,
+                message_text=message_clean,
+                is_embed=is_embed,
                 last_id=None
             )
-        await ctx.send("✧ Sticky message protocol engaged.")
+
+        format_str = " (Rich Embed)" if is_embed else ""
+        await ctx.send(f"✧ Sticky message protocol engaged{format_str}.")
 
     @commands.command(name="unsticky")
     @commands.has_permissions(manage_channels=True)
@@ -214,6 +268,7 @@ class StickyCog(commands.Cog):
             return
 
         sticky_text = data.get("message")
+        is_embed = data.get("is_embed", False)
         last_id = data.get("last_id")
 
         if not sticky_text:
@@ -232,6 +287,7 @@ class StickyCog(commands.Cog):
 
             current_last_id = current_data.get("last_id")
             sticky_text = current_data.get("message")
+            is_embed = current_data.get("is_embed", False)
 
             if not sticky_text:
                 return
@@ -244,15 +300,16 @@ class StickyCog(commands.Cog):
                 except Exception:
                     pass
 
-            # Post new sticky message
+            # Post new sticky message (Embed or Plain Text)
             try:
-                new_msg = await message.channel.send(sticky_text)
+                new_msg = await self._send_sticky(message.channel, sticky_text, is_embed)
 
                 # Update last_id
                 await self._set_sticky_data(
                     channel_id=message.channel.id,
                     guild_id=message.guild.id,
                     message_text=sticky_text,
+                    is_embed=is_embed,
                     last_id=new_msg.id
                 )
             except Exception as e:

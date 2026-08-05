@@ -43,11 +43,17 @@ class DatabaseManager:
                 channel_id INTEGER PRIMARY KEY,
                 guild_id INTEGER NOT NULL,
                 message TEXT NOT NULL,
+                is_embed INTEGER DEFAULT 0,
                 last_message_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        try:
+            await self._db.execute("ALTER TABLE sticky_messages ADD COLUMN is_embed INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
 
         # Table: Bot Admins
         await self._db.execute(
