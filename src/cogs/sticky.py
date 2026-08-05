@@ -128,15 +128,15 @@ class StickyCog(commands.Cog):
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel_id}: {e}")
 
     async def _send_sticky(self, channel: discord.TextChannel, message_text: str, is_embed: bool) -> discord.Message:
-        """Helper to post the sticky message as an embed or plain text."""
+        """Helper to post the sticky message as a clean embed or plain text."""
         if is_embed:
-            embed = EmbedBuilder.base(
-                title="📌 Sticky Notice",
+            embed = discord.Embed(
                 description=message_text,
                 color=EmbedBuilder.COLOR_NEKOTINA
             )
             return await channel.send(embed=embed)
         return await channel.send(message_text)
+
 
     # --- Commands ---
 
