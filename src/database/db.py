@@ -113,7 +113,34 @@ class DatabaseManager:
             """
         )
 
+        # Table: Confession Configs
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS confession_configs (
+                guild_id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                log_channel_id INTEGER,
+                count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Table: Confessions Log
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS confessions_log (
+                confession_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         await self._db.commit()
+
 
 
 

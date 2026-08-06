@@ -206,7 +206,7 @@ class NymLockCog(commands.Cog):
         await self._set_user_lock(ctx.guild.id, member.id, ctx.author.id)
 
         embed = EmbedBuilder.base(
-            title="🔒 NymLock Enforced",
+            title="✦ NymLock Enforced",
             description=f"✧ **Subject**: {member.mention} has been **NymLocked**!\n"
                         f"• **Enforcer**: {ctx.author.mention}\n"
                         f"• **Effect**: All speech in this server will be converted to UwU speak.",
@@ -225,7 +225,7 @@ class NymLockCog(commands.Cog):
         await self._delete_user_lock(ctx.guild.id, member.id)
 
         embed = EmbedBuilder.base(
-            title="🔓 NymLock Released",
+            title="✧ NymLock Released",
             description=f"✧ **Subject**: {member.mention} speech lock has been **lifted**.\n"
                         f"• **Enforcer**: {ctx.author.mention}",
             color=EmbedBuilder.COLOR_SUCCESS,
@@ -249,7 +249,7 @@ class NymLockCog(commands.Cog):
         mentions = [f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in user_ids]
 
         embed = EmbedBuilder.base(
-            title="🔒 NymLocked Subjects",
+            title="📜 NymLocked Subjects",
             description="\n".join(mentions),
             color=EmbedBuilder.COLOR_NEKOTINA,
             author=ctx.author,
@@ -270,7 +270,7 @@ class NymLockCog(commands.Cog):
 
         await self._set_user_lock(ctx.guild.id, member.id, ctx.author.id)
         embed = EmbedBuilder.base(
-            title="🔒 NymLock Enforced",
+            title="✦ NymLock Enforced",
             description=f"✧ **Subject**: {member.mention} has been **NymLocked**!\n"
                         f"• **Enforcer**: {ctx.author.mention}\n"
                         f"• **Effect**: All speech in this server will be converted to UwU speak.",
@@ -287,7 +287,7 @@ class NymLockCog(commands.Cog):
 
         await self._delete_user_lock(ctx.guild.id, member.id)
         embed = EmbedBuilder.base(
-            title="🔓 NymLock Released",
+            title="✧ NymLock Released",
             description=f"✧ **Subject**: {member.mention} speech lock has been **lifted**.\n"
                         f"• **Enforcer**: {ctx.author.mention}",
             color=EmbedBuilder.COLOR_SUCCESS,
@@ -307,13 +307,14 @@ class NymLockCog(commands.Cog):
 
         mentions = [f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in user_ids]
         embed = EmbedBuilder.base(
-            title="🔒 NymLocked Subjects",
+            title="📜 NymLocked Subjects",
             description="\n".join(mentions),
             color=EmbedBuilder.COLOR_NEKOTINA,
             author=ctx.author,
             footer=f"Total Locked: {len(mentions)}"
         )
         await ctx.send(embed=embed)
+
 
     # --- Event Listener for Speech Interception ---
 

@@ -37,11 +37,18 @@ class HelpCategorySelect(discord.ui.Select):
                 value="autodelete",
             ),
             discord.SelectOption(
+                label="Anonymous Confessions",
+                description="Submit anonymous confessions, modal panels, and admin logs.",
+                emoji="💌",
+                value="confession",
+            ),
+            discord.SelectOption(
                 label="NymLock Engine",
                 description="[Trusted Admin Only] Forced speech transformation into UwU speak.",
-                emoji="🔒",
+                emoji="✦",
                 value="nymlock",
             ),
+
             discord.SelectOption(
                 label="System & Health",
                 description="Check latency, uptime, and database operational status.",
@@ -132,9 +139,21 @@ class HelpCategorySelect(discord.ui.Select):
             embed.add_field(name="`/autodelete status [channel]`", value="Check active autodelete configuration.", inline=False)
             embed.add_field(name="`!autodelete <duration>` / `nym autodelete <duration>`", value="Prefix command fallback for autodelete setup.", inline=False)
 
+        elif category == "confession":
+            embed = EmbedBuilder.base(
+                title="💌 Anonymous Confession Engine",
+                description="Submit anonymous confessions, interactive modal panels, and private administrator audit logs.",
+                color=EmbedBuilder.COLOR_NEKOTINA,
+                author=user,
+            )
+            embed.add_field(name="`/confess send <message>` / `!confess <message>`", value="Submit an anonymous confession to the server channel.", inline=False)
+            embed.add_field(name="`/confess setup <channel> [log_channel]`", value="Configure public confession channel and private admin log channel.", inline=False)
+            embed.add_field(name="`/confess panel`", value="Post an interactive 'Submit Confession' modal button panel.", inline=False)
+            embed.add_field(name="`/confess trace <confession_id>`", value="[Admin Only] Trace the real author identity of a confession ID.", inline=False)
+
         elif category == "nymlock":
             embed = EmbedBuilder.base(
-                title="🔒 NymLock Speech Engine",
+                title="✦ NymLock Speech Engine",
                 description="[Trusted Admin Only] Force a target member's speech into intense UwU speak via webhook impersonation.",
                 color=EmbedBuilder.COLOR_ERROR,
                 author=user,
@@ -143,6 +162,7 @@ class HelpCategorySelect(discord.ui.Select):
             embed.add_field(name="`/nymunlock <@user>` / `!nymunlock <@user>` / `!hul <@user>`", value="Unlock a member from NymLock speech mode.", inline=False)
             embed.add_field(name="`/nymlocklist` / `!nymlocklist` / `!hll`", value="List all currently locked members in this server.", inline=False)
             embed.add_field(name="🛡️ Access Control", value="Restricted strictly to Bot Owner & registered Bot Admins.", inline=False)
+
 
 
 
