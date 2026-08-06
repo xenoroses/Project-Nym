@@ -25,7 +25,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Age, Gender & Pronouns",
                 placeholder="e.g. 21 | Female | She/Her",
-                default=self.existing_data.get("age_gender") or "",
+                value=self.existing_data.get("age_gender") or "",
                 max_length=100,
                 required=True,
             )
@@ -34,7 +34,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Relationship Status & Looking For",
                 placeholder="e.g. Single | Looking for Chat / Connections",
-                default=self.existing_data.get("relationship_status") or "",
+                value=self.existing_data.get("relationship_status") or "",
                 max_length=100,
                 required=True,
             )
@@ -43,7 +43,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Interests, Games & Hobbies",
                 placeholder="e.g. WuWa, Valorant, Anime, Lofi Music, Reading",
-                default=self.existing_data.get("interests") or "",
+                value=self.existing_data.get("interests") or "",
                 max_length=200,
                 required=True,
             )
@@ -53,7 +53,7 @@ class ProfileModal(discord.ui.Modal):
                 label="About Me (Bio)",
                 style=discord.InputTextStyle.paragraph,
                 placeholder="Introduce yourself! What makes you unique?",
-                default=self.existing_data.get("bio") or "",
+                value=self.existing_data.get("bio") or "",
                 max_length=1000,
                 required=True,
             )
@@ -62,11 +62,12 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Custom Banner Image / GIF URL (Optional)",
                 placeholder="https://example.com/my-banner.gif",
-                default=self.existing_data.get("image_url") or "",
+                value=self.existing_data.get("image_url") or "",
                 max_length=300,
                 required=False,
             )
         )
+
 
     async def callback(self, interaction: discord.Interaction):
         age_gender = self.children[0].value.strip()
