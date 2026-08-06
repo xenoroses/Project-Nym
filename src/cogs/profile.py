@@ -114,7 +114,7 @@ class DeleteConfirmView(discord.ui.View):
 class DatingProfilePanelView(discord.ui.View):
     """Main Persistent Panel UI View with Create, Edit, View, and Delete buttons."""
 
-    def __init__(self, bot: commands.Bot, cog: "DatingProfileCog"):
+    def __init__(self, bot: commands.Bot, cog: Optional["DatingProfileCog"] = None):
         super().__init__(timeout=None)
         self.bot = bot
         self.cog = cog
@@ -125,8 +125,11 @@ class DatingProfilePanelView(discord.ui.View):
         custom_id="nym_profile_create_btn",
     )
     async def create_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Open Modal instantly to prevent Discord 3-second interaction timeouts
-        modal = ProfileModal(self.bot, self.cog, existing_data=None)
+        cog = self.bot.get_cog("DatingProfileCog") or self.cog
+        if not cog:
+            return await interaction.response.send_message("❌ Profile engine is currently offline.", ephemeral=True)
+
+        modal = ProfileModal(self.bot, cog, existing_data=None)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(
@@ -135,13 +138,16 @@ class DatingProfilePanelView(discord.ui.View):
         custom_id="nym_profile_edit_btn",
     )
     async def edit_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Fast profile lookup with 1-second timeout fallback
+        cog = self.bot.get_cog("DatingProfileCog") or self.cog
+        if not cog:
+            return await interaction.response.send_message("❌ Profile engine is currently offline.", ephemeral=True)
+
         try:
-            profile = await asyncio.wait_for(self.cog.get_user_profile(interaction.user.id), timeout=1.0)
+            profile = await asyncio.wait_for(cog.get_user_profile(interaction.user.id), timeout=1.0)
         except Exception:
             profile = None
 
-        modal = ProfileModal(self.bot, self.cog, existing_data=profile)
+        modal = ProfileModal(self.bot, cog, existing_data=profile)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(
@@ -151,13 +157,17 @@ class DatingProfilePanelView(discord.ui.View):
     )
     async def view_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        profile = await self.cog.get_user_profile(interaction.user.id)
+        cog = self.bot.get_cog("DatingProfileCog") or self.cog
+        if not cog:
+            return await interaction.followup.send("❌ Profile engine is currently offline.", ephemeral=True)
+
+        profile = await cog.get_user_profile(interaction.user.id)
         if not profile:
             return await interaction.followup.send(
                 "⚠️ You haven't created a profile yet. Click **Create Profile** to get started!",
                 ephemeral=True,
             )
-        embed = self.cog.build_profile_embed(interaction.user, profile)
+        embed = cog.build_profile_embed(interaction.user, profile)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(
@@ -167,17 +177,22 @@ class DatingProfilePanelView(discord.ui.View):
     )
     async def delete_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        profile = await self.cog.get_user_profile(interaction.user.id)
+        cog = self.bot.get_cog("DatingProfileCog") or self.cog
+        if not cog:
+            return await interaction.followup.send("❌ Profile engine is currently offline.", ephemeral=True)
+
+        profile = await cog.get_user_profile(interaction.user.id)
         if not profile:
             return await interaction.followup.send(
                 "⚠️ You don't have an active profile to delete.", ephemeral=True
             )
-        view = DeleteConfirmView(self.bot, self.cog, interaction.user.id)
+        view = DeleteConfirmView(self.bot, cog, interaction.user.id)
         await interaction.followup.send(
             "⚠️ **Are you sure you want to permanently delete your Server Dating Profile?**",
             view=view,
             ephemeral=True,
         )
+
 
 
 class ProfileBrowserView(discord.ui.View):

@@ -46,7 +46,7 @@ class ConfessionModal(discord.ui.Modal):
 class ConfessionPanelView(discord.ui.View):
     """Persistent UI View containing the 'Submit Confession' button."""
 
-    def __init__(self, bot: commands.Bot, cog: "ConfessionCog"):
+    def __init__(self, bot: commands.Bot, cog: Optional["ConfessionCog"] = None):
         super().__init__(timeout=None)
         self.bot = bot
         self.cog = cog
@@ -60,7 +60,11 @@ class ConfessionPanelView(discord.ui.View):
     async def submit_button(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ):
-        modal = ConfessionModal(self.bot, self.cog)
+        cog = self.bot.get_cog("ConfessionCog") or self.cog
+        if not cog:
+            return await interaction.response.send_message("❌ Confession engine is currently offline.", ephemeral=True)
+
+        modal = ConfessionModal(self.bot, cog)
         await interaction.response.send_modal(modal)
 
 
@@ -75,6 +79,18 @@ class ConfessionCog(commands.Cog):
     async def on_ready(self):
         """Ensure persistent views are bound on bot ready."""
         self.bot.add_view(ConfessionPanelView(self.bot, self))
+
+    def resolve_channel_id(self, ch: Any) -> Optional[int]:
+        """Safely resolve channel ID from discord object, string mention, or integer."""
+        if ch is None:
+            return None
+        if hasattr(ch, "id"):
+            return ch.id
+        if isinstance(ch, (int, str)):
+            s = str(ch).strip("<#> ")
+            if s.isdigit():
+                return int(s)
+        return None
 
     # --- Storage Helpers ---
 
@@ -291,27 +307,36 @@ class ConfessionCog(commands.Cog):
     async def confess_setup(
         self,
         ctx: discord.ApplicationContext,
-        channel: discord.TextChannel = discord.Option(description="Target channel for public confessions"),
-        log_channel: Optional[discord.TextChannel] = discord.Option(
-            description="Private admin channel for author audit logs (Optional)", default=None
-        ),
+        channel: discord.Option(description="Target channel for public confessions"), # type: ignore
+        log_channel: discord.Option(description="Private admin channel for author audit logs (Optional)", default=None), # type: ignore
     ):
         """Configure public confession and private admin log channels."""
         if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
             return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission to configure confessions.", ephemeral=True)
 
-        log_id = log_channel.id if log_channel else None
+        ch_id = self.resolve_channel_id(channel)
+        if not ch_id:
+            return await ctx.respond("❌ Invalid confession channel specified.", ephemeral=True)
+
+        target_ch = ctx.guild.get_channel(ch_id)
+        if not target_ch:
+            return await ctx.respond(f"❌ Channel with ID `{ch_id}` not found in this server.", ephemeral=True)
+
+        log_id = self.resolve_channel_id(log_channel)
+        log_ch = ctx.guild.get_channel(log_id) if log_id else None
+
         await self._set_guild_config(
-            guild_id=ctx.guild.id, channel_id=channel.id, log_channel_id=log_id
+            guild_id=ctx.guild.id, channel_id=target_ch.id, log_channel_id=log_ch.id if log_ch else None
         )
 
         embed = EmbedBuilder.success(
             title="Confession Engine Configured",
-            description=f"✧ Public confessions channel set to {channel.mention}.\n"
-                        f"• **Admin Audit Logs:** {log_channel.mention if log_channel else '`Not Configured`'}\n"
+            description=f"✧ Public confessions channel set to {target_ch.mention}.\n"
+                        f"• **Admin Audit Logs:** {log_ch.mention if log_ch else '`Not Configured`'}\n"
                         f"• Use `/confess panel` to send an interactive submission button to the channel.",
         )
         await ctx.respond(embed=embed, ephemeral=True)
+
 
     @confess.command(
         name="panel",
