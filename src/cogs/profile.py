@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Union, List
 
-
 import discord
 from discord.ext import commands
 from src.utils.embeds import EmbedBuilder
@@ -26,7 +25,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Age, Gender & Pronouns",
                 placeholder="e.g. 21 | Female | She/Her",
-                default=self.existing_data.get("age_gender", ""),
+                default=self.existing_data.get("age_gender") or "",
                 max_length=100,
                 required=True,
             )
@@ -35,7 +34,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Relationship Status & Looking For",
                 placeholder="e.g. Single | Looking for Chat / Connections",
-                default=self.existing_data.get("relationship_status", ""),
+                default=self.existing_data.get("relationship_status") or "",
                 max_length=100,
                 required=True,
             )
@@ -44,7 +43,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Interests, Games & Hobbies",
                 placeholder="e.g. WuWa, Valorant, Anime, Lofi Music, Reading",
-                default=self.existing_data.get("interests", ""),
+                default=self.existing_data.get("interests") or "",
                 max_length=200,
                 required=True,
             )
@@ -54,7 +53,7 @@ class ProfileModal(discord.ui.Modal):
                 label="About Me (Bio)",
                 style=discord.InputTextStyle.paragraph,
                 placeholder="Introduce yourself! What makes you unique?",
-                default=self.existing_data.get("bio", ""),
+                default=self.existing_data.get("bio") or "",
                 max_length=1000,
                 required=True,
             )
@@ -63,7 +62,7 @@ class ProfileModal(discord.ui.Modal):
             discord.ui.InputText(
                 label="Custom Banner Image / GIF URL (Optional)",
                 placeholder="https://example.com/my-banner.gif",
-                default=self.existing_data.get("image_url", ""),
+                default=self.existing_data.get("image_url") or "",
                 max_length=300,
                 required=False,
             )
@@ -181,7 +180,6 @@ class DatingProfilePanelView(discord.ui.View):
         )
 
 
-
 class ProfileBrowserView(discord.ui.View):
     """Interactive Browser View for discovering profiles in the server."""
 
@@ -244,6 +242,11 @@ class DatingProfileCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bot.add_view(DatingProfilePanelView(bot, self))
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Ensure persistent view listeners are registered on ready."""
+        self.bot.add_view(DatingProfilePanelView(self.bot, self))
 
     # --- Storage Helpers ---
 
@@ -448,13 +451,11 @@ class DatingProfileCog(commands.Cog):
 
         return embed
 
-
     # --- Commands ---
 
     profile = discord.SlashCommandGroup("profile", "Server Dating Profile Engine and discovery controls.")
 
     @profile.command(name="panel", description="Post the interactive Dating Profile Portal panel to the channel.")
-    @commands.has_permissions(manage_channels=True)
     async def profile_panel_slash(
         self,
         ctx: discord.ApplicationContext,
@@ -463,6 +464,9 @@ class DatingProfileCog(commands.Cog):
         ),
     ):
         """Post main profile management panel with Create, Edit, View, and Delete buttons."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission to post the profile panel.", ephemeral=True)
+
         target_ch = channel or ctx.channel
 
         embed = EmbedBuilder.base(
@@ -538,8 +542,7 @@ class DatingProfileCog(commands.Cog):
         """Prefix command fallback (!profile [user] / !profile panel / !profile discover)."""
         target_member = member or ctx.author
 
-        # Check subcommands
-        if ctx.message.content.lower().strip().endswith("panel") and ctx.author.guild_permissions.manage_channels:
+        if ctx.message.content.lower().strip().endswith("panel") and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
             embed = EmbedBuilder.base(
                 title="👤 Your Dating Profile",
                 description="*Create your Server Profile so others can get to know you. Explore profiles around the server and send a heart to people you like.* 💕\n\n"

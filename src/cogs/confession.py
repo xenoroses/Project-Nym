@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Union, List
 
-
 import discord
 from discord.ext import commands
 from src.utils.embeds import EmbedBuilder
@@ -66,15 +65,16 @@ class ConfessionPanelView(discord.ui.View):
 
 
 class ConfessionCog(commands.Cog):
-    """Aesthetic Anonymous Confession Engine for Project Nym.
-
-    Features anonymous channel postings, interactive modal submission buttons,
-    private administrator audit logs, and confession author tracing.
-    """
+    """Aesthetic Anonymous Confession Engine for Project Nym."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bot.add_view(ConfessionPanelView(bot, self))
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Ensure persistent views are bound on bot ready."""
+        self.bot.add_view(ConfessionPanelView(self.bot, self))
 
     # --- Storage Helpers ---
 
@@ -173,6 +173,11 @@ class ConfessionCog(commands.Cog):
             msg = "⚠️ Confession channel is not configured in this server. An admin must run `/confess setup`."
             if interaction:
                 return await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                try:
+                    return await user.send(msg)
+                except Exception:
+                    pass
             return
 
         confession_ch = guild.get_channel(config["channel_id"])
@@ -180,6 +185,11 @@ class ConfessionCog(commands.Cog):
             msg = "❌ Configured confession channel was not found."
             if interaction:
                 return await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                try:
+                    return await user.send(msg)
+                except Exception:
+                    pass
             return
 
         # Increment confession count
@@ -246,6 +256,11 @@ class ConfessionCog(commands.Cog):
                 await interaction.followup.send(success_msg, ephemeral=True)
             else:
                 await interaction.response.send_message(success_msg, ephemeral=True)
+        else:
+            try:
+                await user.send(success_msg)
+            except Exception:
+                pass
 
     # --- Commands ---
 
@@ -273,7 +288,6 @@ class ConfessionCog(commands.Cog):
     @confess.command(
         name="setup", description="Set up the designated channel for public anonymous confessions."
     )
-    @commands.has_permissions(manage_channels=True)
     async def confess_setup(
         self,
         ctx: discord.ApplicationContext,
@@ -283,6 +297,9 @@ class ConfessionCog(commands.Cog):
         ),
     ):
         """Configure public confession and private admin log channels."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission to configure confessions.", ephemeral=True)
+
         log_id = log_channel.id if log_channel else None
         await self._set_guild_config(
             guild_id=ctx.guild.id, channel_id=channel.id, log_channel_id=log_id
@@ -300,7 +317,6 @@ class ConfessionCog(commands.Cog):
         name="panel",
         description="Send an interactive 'Submit Confession' button panel to the channel.",
     )
-    @commands.has_permissions(manage_channels=True)
     async def confess_panel(
         self,
         ctx: discord.ApplicationContext,
@@ -309,6 +325,9 @@ class ConfessionCog(commands.Cog):
         ),
     ):
         """Send an interactive submission panel with a modal popup button."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission to post the panel.", ephemeral=True)
+
         target_ch = channel or ctx.channel
         embed = EmbedBuilder.base(
             title="🌸 Anonymous Confession Portal",
@@ -333,13 +352,15 @@ class ConfessionCog(commands.Cog):
         name="trace",
         description="[Admin Only] Trace the real author of a specific confession ID.",
     )
-    @commands.has_permissions(manage_messages=True)
     async def confess_trace(
         self,
         ctx: discord.ApplicationContext,
         confession_id: int = discord.Option(description="The confession ID to trace"),
     ):
         """Reveal the author of a specific confession ID to administrators."""
+        if not ctx.author.guild_permissions.manage_messages and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Messages** or **Administrator** permission to trace confessions.", ephemeral=True)
+
         row = await self.bot.db.fetch_one(
             "SELECT user_id, content, created_at FROM confessions_log WHERE confession_id = ? AND guild_id = ?",
             (confession_id, ctx.guild.id),
@@ -379,20 +400,19 @@ class ConfessionCog(commands.Cog):
             return await ctx.send("⚠️ Usage: `!confess <your confession>` or `/confess send`.")
 
         clean_text = message.strip()
-
-        # Handle subcommands via prefix if matched
         args = clean_text.split()
         sub = args[0].lower()
 
-        if sub == "setup" and ctx.author.guild_permissions.manage_channels:
+        if sub == "setup" and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
             if len(ctx.message.channel_mentions) > 0:
                 ch = ctx.message.channel_mentions[0]
                 log_ch = ctx.message.channel_mentions[1] if len(ctx.message.channel_mentions) > 1 else None
                 log_id = log_ch.id if log_ch else None
                 await self._set_guild_config(ctx.guild.id, channel_id=ch.id, log_channel_id=log_id)
                 return await ctx.send(f"✧ Confession channel set to {ch.mention}.")
+            return await ctx.send("⚠️ Please mention a channel: `!confess setup #confessions [#admin-log]`.")
 
-        if sub == "panel" and ctx.author.guild_permissions.manage_channels:
+        if sub == "panel" and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
             embed = EmbedBuilder.base(
                 title="🌸 Anonymous Confession Portal",
                 description="Click the button below to submit an anonymous confession.\n"
@@ -407,7 +427,7 @@ class ConfessionCog(commands.Cog):
                 pass
             return
 
-        if sub == "trace" and ctx.author.guild_permissions.manage_messages:
+        if sub == "trace" and (ctx.author.guild_permissions.manage_messages or ctx.author.guild_permissions.administrator):
             if len(args) > 1 and args[1].isdigit():
                 cid = int(args[1])
                 row = await self.bot.db.fetch_one(

@@ -141,7 +141,6 @@ class StickyCog(commands.Cog):
     # --- Commands ---
 
     @discord.slash_command(name="sticky", description="Set a sticky message for this channel.")
-    @commands.has_permissions(manage_channels=True)
     async def sticky_slash(
         self,
         ctx: discord.ApplicationContext,
@@ -149,6 +148,9 @@ class StickyCog(commands.Cog):
         as_embed: bool = discord.Option(description="Format the sticky message as a rich embed?", default=False)
     ):
         """Slash command to set a sticky notice in the channel."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
         async with self.channel_locks[ctx.channel.id]:
             await self._set_sticky_data(
                 channel_id=ctx.channel.id,
@@ -168,9 +170,11 @@ class StickyCog(commands.Cog):
         await ctx.respond(embed=embed, ephemeral=True)
 
     @discord.slash_command(name="unsticky", description="Remove the sticky message from this channel.")
-    @commands.has_permissions(manage_channels=True)
     async def unsticky_slash(self, ctx: discord.ApplicationContext):
         """Slash command to remove a sticky message from the channel."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
         async with self.channel_locks[ctx.channel.id]:
             data = await self._get_sticky_data(ctx.channel.id)
 
@@ -196,6 +200,7 @@ class StickyCog(commands.Cog):
             description=f"⌬ Sticky message protocol disengaged for {ctx.channel.mention}."
         )
         await ctx.respond(embed=embed, ephemeral=True)
+
 
     # --- Prefix Command Fallbacks ---
 
