@@ -52,9 +52,10 @@ class HelpCategorySelect(discord.ui.Select):
             discord.SelectOption(
                 label="NymLock Engine",
                 description="[Trusted Admin Only] Forced speech transformation into UwU speak.",
-                emoji="✦",
+                emoji="✨",
                 value="nymlock",
             ),
+
 
             discord.SelectOption(
                 label="System & Health",
