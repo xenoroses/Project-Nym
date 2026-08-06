@@ -37,6 +37,12 @@ class HelpCategorySelect(discord.ui.Select):
                 value="autodelete",
             ),
             discord.SelectOption(
+                label="NymLock Engine",
+                description="[Trusted Admin Only] Forced speech transformation into UwU speak.",
+                emoji="🔒",
+                value="nymlock",
+            ),
+            discord.SelectOption(
                 label="System & Health",
                 description="Check latency, uptime, and database operational status.",
                 emoji="💚",
@@ -49,6 +55,7 @@ class HelpCategorySelect(discord.ui.Select):
                 value="eval",
             ),
         ]
+
 
         super().__init__(placeholder="🌸 Choose a command category...", min_values=1, max_values=1, options=options)
 
@@ -124,6 +131,19 @@ class HelpCategorySelect(discord.ui.Select):
             embed.add_field(name="`/autodelete off [channel]`", value="Turn off autodelete in a channel.", inline=False)
             embed.add_field(name="`/autodelete status [channel]`", value="Check active autodelete configuration.", inline=False)
             embed.add_field(name="`!autodelete <duration>` / `nym autodelete <duration>`", value="Prefix command fallback for autodelete setup.", inline=False)
+
+        elif category == "nymlock":
+            embed = EmbedBuilder.base(
+                title="🔒 NymLock Speech Engine",
+                description="[Trusted Admin Only] Force a target member's speech into intense UwU speak via webhook impersonation.",
+                color=EmbedBuilder.COLOR_ERROR,
+                author=user,
+            )
+            embed.add_field(name="`/nymlock <@user>` / `!nymlock <@user>` / `!hl <@user>`", value="Lock a member into NymLock speech mode.", inline=False)
+            embed.add_field(name="`/nymunlock <@user>` / `!nymunlock <@user>` / `!hul <@user>`", value="Unlock a member from NymLock speech mode.", inline=False)
+            embed.add_field(name="`/nymlocklist` / `!nymlocklist` / `!hll`", value="List all currently locked members in this server.", inline=False)
+            embed.add_field(name="🛡️ Access Control", value="Restricted strictly to Bot Owner & registered Bot Admins.", inline=False)
+
 
 
         elif category == "health":

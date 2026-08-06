@@ -100,7 +100,21 @@ class DatabaseManager:
             """
         )
 
+        # Table: NymLock Users
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nymlock_users (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                locked_by INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, user_id)
+            )
+            """
+        )
+
         await self._db.commit()
+
 
 
 
