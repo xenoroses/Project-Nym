@@ -124,12 +124,7 @@ class DatingProfilePanelView(discord.ui.View):
         custom_id="nym_profile_create_btn",
     )
     async def create_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        profile = await self.cog.get_user_profile(interaction.user.id)
-        if profile:
-            return await interaction.response.send_message(
-                "⚠️ You already have an active profile! Click **Edit Profile** to update your info.",
-                ephemeral=True,
-            )
+        # Open Modal instantly to prevent Discord 3-second interaction timeouts
         modal = ProfileModal(self.bot, self.cog, existing_data=None)
         await interaction.response.send_modal(modal)
 
@@ -139,12 +134,12 @@ class DatingProfilePanelView(discord.ui.View):
         custom_id="nym_profile_edit_btn",
     )
     async def edit_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        profile = await self.cog.get_user_profile(interaction.user.id)
-        if not profile:
-            return await interaction.response.send_message(
-                "⚠️ You don't have a profile yet! Click **Create Profile** to make one.",
-                ephemeral=True,
-            )
+        # Fast profile lookup with 1-second timeout fallback
+        try:
+            profile = await asyncio.wait_for(self.cog.get_user_profile(interaction.user.id), timeout=1.0)
+        except Exception:
+            profile = None
+
         modal = ProfileModal(self.bot, self.cog, existing_data=profile)
         await interaction.response.send_modal(modal)
 
@@ -154,14 +149,15 @@ class DatingProfilePanelView(discord.ui.View):
         custom_id="nym_profile_view_btn",
     )
     async def view_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         profile = await self.cog.get_user_profile(interaction.user.id)
         if not profile:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "⚠️ You haven't created a profile yet. Click **Create Profile** to get started!",
                 ephemeral=True,
             )
         embed = self.cog.build_profile_embed(interaction.user, profile)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(
         label="Delete My Profile",
@@ -169,17 +165,19 @@ class DatingProfilePanelView(discord.ui.View):
         custom_id="nym_profile_delete_btn",
     )
     async def delete_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         profile = await self.cog.get_user_profile(interaction.user.id)
         if not profile:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "⚠️ You don't have an active profile to delete.", ephemeral=True
             )
         view = DeleteConfirmView(self.bot, self.cog, interaction.user.id)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "⚠️ **Are you sure you want to permanently delete your Server Dating Profile?**",
             view=view,
             ephemeral=True,
         )
+
 
 
 class ProfileBrowserView(discord.ui.View):
