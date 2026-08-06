@@ -77,7 +77,9 @@ class NymBot(commands.Bot):
             owner_id=settings.owner_id,
             debug_guilds=[settings.guild_id] if settings.guild_id else None,
             case_insensitive=True,
+            help_command=None,
         )
+
 
 
         self.settings = settings
