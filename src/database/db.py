@@ -139,7 +139,38 @@ class DatabaseManager:
             """
         )
 
+        # Table: Dating Profiles
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dating_profiles (
+                user_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                age_gender TEXT,
+                relationship_status TEXT,
+                bio TEXT,
+                interests TEXT,
+                image_url TEXT,
+                hearts_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Table: Profile Likes
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profile_likes (
+                liker_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (liker_id, target_id)
+            )
+            """
+        )
+
         await self._db.commit()
+
 
 
 

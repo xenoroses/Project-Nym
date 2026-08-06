@@ -37,11 +37,18 @@ class HelpCategorySelect(discord.ui.Select):
                 value="autodelete",
             ),
             discord.SelectOption(
+                label="Server Dating Profiles",
+                description="Create, edit, view, and discover server member profile cards.",
+                emoji="💕",
+                value="profile",
+            ),
+            discord.SelectOption(
                 label="Anonymous Confessions",
                 description="Submit anonymous confessions, modal panels, and admin logs.",
                 emoji="💌",
                 value="confession",
             ),
+
             discord.SelectOption(
                 label="NymLock Engine",
                 description="[Trusted Admin Only] Forced speech transformation into UwU speak.",
@@ -139,6 +146,18 @@ class HelpCategorySelect(discord.ui.Select):
             embed.add_field(name="`/autodelete status [channel]`", value="Check active autodelete configuration.", inline=False)
             embed.add_field(name="`!autodelete <duration>` / `nym autodelete <duration>`", value="Prefix command fallback for autodelete setup.", inline=False)
 
+        elif category == "profile":
+            embed = EmbedBuilder.base(
+                title="💕 Server Dating & Profile Engine",
+                description="Create your server profile card, browse server members, and send hearts to users you like.",
+                color=EmbedBuilder.COLOR_NEKOTINA,
+                author=user,
+            )
+            embed.add_field(name="`/profile panel` / `!profile panel`", value="Post the interactive profile management portal panel.", inline=False)
+            embed.add_field(name="`/profile view [user]` / `!profile [user]`", value="View your own or another member's dating profile card.", inline=False)
+            embed.add_field(name="`/profile discover` / `!discover`", value="Browse server member profile cards interactively.", inline=False)
+            embed.add_field(name="`/profile like <user>`", value="Send a heart to a member's dating profile card.", inline=False)
+
         elif category == "confession":
             embed = EmbedBuilder.base(
                 title="💌 Anonymous Confession Engine",
@@ -150,6 +169,7 @@ class HelpCategorySelect(discord.ui.Select):
             embed.add_field(name="`/confess setup <channel> [log_channel]`", value="Configure public confession channel and private admin log channel.", inline=False)
             embed.add_field(name="`/confess panel`", value="Post an interactive 'Submit Confession' modal button panel.", inline=False)
             embed.add_field(name="`/confess trace <confession_id>`", value="[Admin Only] Trace the real author identity of a confession ID.", inline=False)
+
 
         elif category == "nymlock":
             embed = EmbedBuilder.base(
