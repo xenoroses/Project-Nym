@@ -358,7 +358,10 @@ class DatingProfileCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Upstash delete failed for profile {user.id}: {e}")
 
-        await interaction.response.send_message("🗑️ **Your Server Dating Profile has been deleted.**", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send("🗑️ **Your Server Dating Profile has been deleted.**", ephemeral=True)
+        else:
+            await interaction.response.edit_message(content="🗑️ **Your Server Dating Profile has been deleted.**", embed=None, view=None)
 
     async def send_heart(self, liker_id: int, target_id: int, guild_id: int) -> tuple[bool, int, str]:
         """Send a heart to a user profile, preventing duplicates."""
@@ -433,10 +436,16 @@ class DatingProfileCog(commands.Cog):
         )
 
         img = data.get("image_url")
-        if img and (img.startswith("http://") or img.startswith("https://")):
-            embed.set_image(url=img)
+        if img and isinstance(img, str) and img.strip():
+            clean_img = img.strip()
+            if clean_img.startswith("http://") or clean_img.startswith("https://"):
+                try:
+                    embed.set_image(url=clean_img)
+                except Exception:
+                    pass
 
         return embed
+
 
     # --- Commands ---
 
