@@ -13,6 +13,13 @@ class OnReadyEvent(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Force sync slash commands with Discord API
+        try:
+            await self.bot.sync_commands()
+            logger.info("⚡ Application commands forced synced with Discord API.")
+        except Exception as e:
+            logger.warning(f"Failed syncing commands with Discord API: {e}")
+
         guild_count = len(self.bot.guilds)
         total_members = sum(g.member_count or 0 for g in self.bot.guilds)
         command_count = len(self.bot.commands) + len(self.bot.pending_application_commands)
@@ -30,6 +37,7 @@ class OnReadyEvent(commands.Cog):
                 name="/ping | Project Nym"
             )
         )
+
 
 
 def setup(bot: commands.Bot):

@@ -106,6 +106,19 @@ class AdminCog(commands.Cog):
         )
         await ctx.send(embed=embed)
 
+    @commands.command(name="sync")
+    async def sync_commands_prefix(self, ctx: commands.Context):
+        """[Trusted Admin Only] Force sync slash commands with Discord API."""
+        if not await is_trusted_admin(ctx):
+            return await ctx.send("❌ Only trusted admins can run command sync.")
+
+        try:
+            await self.bot.sync_commands()
+            await ctx.send("⚡ **Slash commands forced synced with Discord API successfully!**")
+        except Exception as e:
+            await ctx.send(f"❌ Failed syncing commands: `{e}`")
+
 
 def setup(bot: commands.Bot):
     bot.add_cog(AdminCog(bot))
+
