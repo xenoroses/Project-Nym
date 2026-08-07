@@ -22,6 +22,7 @@ class EmbedBuilder:
         author: Optional[Union[discord.User, discord.Member]] = None,
         footer: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
+        raw_footer: bool = False,
     ) -> discord.Embed:
         """Create a styled base embed matching Nekotina visual guidelines."""
         embed = discord.Embed(
@@ -35,12 +36,13 @@ class EmbedBuilder:
             embed.set_author(name=f"Requested by {author.display_name}", icon_url=avatar_url)
 
         if footer:
-            if footer.startswith("Nym Protocol"):
+            if raw_footer or footer.startswith("Nym Protocol"):
                 embed.set_footer(text=footer)
             else:
                 embed.set_footer(text=f"Nym Protocol • {footer}")
         else:
             embed.set_footer(text="Nym Protocol • Type /help or nym help")
+
 
 
         if thumbnail_url:

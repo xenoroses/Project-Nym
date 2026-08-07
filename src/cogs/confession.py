@@ -231,7 +231,9 @@ class ConfessionCog(commands.Cog):
             description=content,
             color=EmbedBuilder.COLOR_NEKOTINA,
             footer="Type /confess or click button to submit",
+            raw_footer=True,
         )
+
 
         try:
             await confession_ch.send(embed=public_embed)
