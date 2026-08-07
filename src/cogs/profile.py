@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Any
 
 import discord
 from discord.ext import commands
@@ -67,7 +67,6 @@ class ProfileModal(discord.ui.Modal):
                 required=False,
             )
         )
-
 
     async def callback(self, interaction: discord.Interaction):
         age_gender = self.children[0].value.strip()
@@ -195,7 +194,6 @@ class DatingProfilePanelView(discord.ui.View):
         )
 
 
-
 class ProfileBrowserView(discord.ui.View):
     """Interactive Browser View for discovering profiles in the server."""
 
@@ -243,6 +241,8 @@ class ProfileBrowserView(discord.ui.View):
         if success:
             target_data["hearts_count"] = new_count
             await interaction.response.send_message(f"💕 You sent a heart to <@{target_id}>! Total Hearts: `{new_count}`", ephemeral=True)
+            target_member = interaction.guild.get_member(target_id) or interaction.user
+            await self.cog.sync_public_profile_posts(interaction.guild, target_member, target_data)
         else:
             await interaction.response.send_message(f"⚠️ {msg}", ephemeral=True)
 
@@ -264,7 +264,140 @@ class DatingProfileCog(commands.Cog):
         """Ensure persistent view listeners are registered on ready."""
         self.bot.add_view(DatingProfilePanelView(self.bot, self))
 
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        """Global interaction listener for public profile card heart buttons."""
+        if not interaction.custom_id or not interaction.custom_id.startswith("nym_heart_"):
+            return
+
+        try:
+            target_id = int(interaction.custom_id.split("_")[2])
+        except Exception:
+            return
+
+        if interaction.user.id == target_id:
+            return await interaction.response.send_message("💖 You cannot send a heart to your own profile!", ephemeral=True)
+
+        success, new_count, msg = await self.send_heart(interaction.user.id, target_id, interaction.guild.id)
+        if not success:
+            return await interaction.response.send_message(f"⚠️ {msg}", ephemeral=True)
+
+        profile = await self.get_user_profile(target_id)
+        if profile:
+            profile["hearts_count"] = new_count
+            target_member = interaction.guild.get_member(target_id)
+            if target_member:
+                embed = self.build_profile_embed(target_member, profile)
+                view = discord.ui.View(timeout=None)
+                view.add_item(
+                    discord.ui.Button(
+                        label="Send Heart",
+                        style=discord.ButtonStyle.primary,
+                        emoji="💖",
+                        custom_id=f"nym_heart_{target_id}",
+                    )
+                )
+                try:
+                    await interaction.message.edit(embed=embed, view=view)
+                except Exception:
+                    pass
+
+                await self.sync_public_profile_posts(interaction.guild, target_member, profile)
+
+        await interaction.response.send_message(f"💕 You sent a heart to <@{target_id}>! Total Hearts: `{new_count}`", ephemeral=True)
+
+    def resolve_channel_id(self, ch: Any) -> Optional[int]:
+        """Safely resolve channel ID from discord object, string mention, or integer."""
+        if ch is None:
+            return None
+        if hasattr(ch, "id"):
+            return ch.id
+        if isinstance(ch, (int, str)):
+            s = str(ch).strip("<#> ")
+            if s.isdigit():
+                return int(s)
+        return None
+
+    def is_vip_or_booster(self, member: discord.Member) -> bool:
+        """Check if a member holds a VIP or Booster role."""
+        if not hasattr(member, "roles"):
+            return False
+        for role in member.roles:
+            name = role.name.lower()
+            if "vip" in name or "booster" in name or "boost" in name:
+                return True
+        return False
+
     # --- Storage Helpers ---
+
+    async def _get_profile_config(self, guild_id: int) -> Optional[dict]:
+        """Fetch auto-posting channels config for a guild."""
+        key = f"profile:config:{guild_id}"
+
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                raw_data = await self.bot.upstash.get(key)
+                if raw_data:
+                    parsed = json.loads(raw_data)
+                    if isinstance(parsed, dict):
+                        return parsed
+            except Exception as e:
+                logger.warning(f"Upstash read failed for profile config {guild_id}: {e}")
+
+        try:
+            row = await self.bot.db.fetch_one(
+                "SELECT user_channel_id, vip_channel_id FROM profile_configs WHERE guild_id = ?",
+                (guild_id,),
+            )
+            if row:
+                data = {
+                    "user_channel_id": row["user_channel_id"],
+                    "vip_channel_id": row["vip_channel_id"],
+                }
+                if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+                    await self.bot.upstash.set(key, json.dumps(data))
+                return data
+        except Exception as e:
+            logger.error(f"SQLite read error for profile config {guild_id}: {e}")
+
+        return None
+
+    async def _set_profile_config(
+        self,
+        guild_id: int,
+        user_channel_id: Optional[int] = None,
+        vip_channel_id: Optional[int] = None,
+    ) -> dict:
+        """Update auto-posting channels config for a guild."""
+        key = f"profile:config:{guild_id}"
+        current = await self._get_profile_config(guild_id) or {
+            "user_channel_id": None,
+            "vip_channel_id": None,
+        }
+
+        if user_channel_id is not None:
+            current["user_channel_id"] = user_channel_id
+        if vip_channel_id is not None:
+            current["vip_channel_id"] = vip_channel_id
+
+        await self.bot.db.execute(
+            """
+            INSERT INTO profile_configs (guild_id, user_channel_id, vip_channel_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                user_channel_id = excluded.user_channel_id,
+                vip_channel_id = excluded.vip_channel_id
+            """,
+            (guild_id, current["user_channel_id"], current["vip_channel_id"]),
+        )
+
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                await self.bot.upstash.set(key, json.dumps(current))
+            except Exception as e:
+                logger.warning(f"Upstash set failed for profile config {guild_id}: {e}")
+
+        return current
 
     async def get_user_profile(self, user_id: int) -> Optional[dict]:
         """Fetch user profile data from Redis or SQLite."""
@@ -296,6 +429,8 @@ class DatingProfileCog(commands.Cog):
                     "interests": row["interests"],
                     "image_url": row["image_url"],
                     "hearts_count": row["hearts_count"] or 0,
+                    "posted_msg_id": row["posted_msg_id"],
+                    "vip_msg_id": row["vip_msg_id"],
                 }
                 if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
                     await self.bot.upstash.set(key, json.dumps(data))
@@ -304,6 +439,75 @@ class DatingProfileCog(commands.Cog):
             logger.error(f"SQLite read error for profile {user_id}: {e}")
 
         return None
+
+    async def sync_public_profile_posts(self, guild: discord.Guild, member: discord.Member, data: dict):
+        """Auto-post or update public profile cards in #user-profiles and #vip-profiles."""
+        config = await self._get_profile_config(guild.id)
+        if not config:
+            return
+
+        embed = self.build_profile_embed(member, data)
+        target_id = member.id
+
+        view = discord.ui.View(timeout=None)
+        view.add_item(
+            discord.ui.Button(
+                label="Send Heart",
+                style=discord.ButtonStyle.primary,
+                emoji="💖",
+                custom_id=f"nym_heart_{target_id}",
+            )
+        )
+
+        # 1. Main User Profiles Channel
+        user_ch_id = config.get("user_channel_id")
+        if user_ch_id:
+            user_ch = guild.get_channel(user_ch_id)
+            if user_ch:
+                posted_id = data.get("posted_msg_id")
+                msg_obj = None
+                if posted_id:
+                    try:
+                        msg_obj = await user_ch.fetch_message(posted_id)
+                        await msg_obj.edit(embed=embed, view=view)
+                    except Exception:
+                        msg_obj = None
+
+                if not msg_obj:
+                    try:
+                        new_msg = await user_ch.send(embed=embed, view=view)
+                        data["posted_msg_id"] = new_msg.id
+                        await self.bot.db.execute(
+                            "UPDATE dating_profiles SET posted_msg_id = ? WHERE user_id = ?",
+                            (new_msg.id, target_id),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed sending public profile in {user_ch.id}: {e}")
+
+        # 2. VIP / Booster Profiles Channel
+        vip_ch_id = config.get("vip_channel_id")
+        if vip_ch_id and self.is_vip_or_booster(member):
+            vip_ch = guild.get_channel(vip_ch_id)
+            if vip_ch:
+                vip_id = data.get("vip_msg_id")
+                msg_obj = None
+                if vip_id:
+                    try:
+                        msg_obj = await vip_ch.fetch_message(vip_id)
+                        await msg_obj.edit(embed=embed, view=view)
+                    except Exception:
+                        msg_obj = None
+
+                if not msg_obj:
+                    try:
+                        new_msg = await vip_ch.send(embed=embed, view=view)
+                        data["vip_msg_id"] = new_msg.id
+                        await self.bot.db.execute(
+                            "UPDATE dating_profiles SET vip_msg_id = ? WHERE user_id = ?",
+                            (new_msg.id, target_id),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed sending VIP profile in {vip_ch.id}: {e}")
 
     async def save_user_profile(
         self,
@@ -320,6 +524,8 @@ class DatingProfileCog(commands.Cog):
         key = f"profile:user:{user.id}"
         existing = await self.get_user_profile(user.id) or {}
         hearts_count = existing.get("hearts_count", 0)
+        posted_msg_id = existing.get("posted_msg_id")
+        vip_msg_id = existing.get("vip_msg_id")
 
         data = {
             "user_id": user.id,
@@ -330,13 +536,15 @@ class DatingProfileCog(commands.Cog):
             "interests": interests,
             "image_url": image_url,
             "hearts_count": hearts_count,
+            "posted_msg_id": posted_msg_id,
+            "vip_msg_id": vip_msg_id,
         }
 
         # 1. SQLite
         await self.bot.db.execute(
             """
-            INSERT INTO dating_profiles (user_id, guild_id, age_gender, relationship_status, bio, interests, image_url, hearts_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO dating_profiles (user_id, guild_id, age_gender, relationship_status, bio, interests, image_url, hearts_count, posted_msg_id, vip_msg_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 guild_id = excluded.guild_id,
                 age_gender = excluded.age_gender,
@@ -346,7 +554,7 @@ class DatingProfileCog(commands.Cog):
                 image_url = excluded.image_url,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (user.id, guild.id, age_gender, status_looking, bio, interests, image_url, hearts_count),
+            (user.id, guild.id, age_gender, status_looking, bio, interests, image_url, hearts_count, posted_msg_id, vip_msg_id),
         )
 
         # 2. Redis
@@ -356,6 +564,10 @@ class DatingProfileCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Upstash set failed for profile {user.id}: {e}")
 
+        # 3. Auto-post or update in public channels
+        member_obj = guild.get_member(user.id) or user
+        await self.sync_public_profile_posts(guild, member_obj, data)
+
         embed = self.build_profile_embed(user, data)
         msg = "✨ **Your Server Dating Profile has been updated successfully!**"
         if interaction.response.is_done():
@@ -364,14 +576,38 @@ class DatingProfileCog(commands.Cog):
             await interaction.response.send_message(content=msg, embed=embed, ephemeral=True)
 
     async def delete_user_profile(self, interaction: discord.Interaction, user: Union[discord.User, discord.Member]):
-        """Delete a user's profile data."""
+        """Delete a user's profile data and remove posted cards."""
         key = f"profile:user:{user.id}"
+        profile = await self.get_user_profile(user.id)
 
-        # 1. SQLite
+        if profile:
+            posted_id = profile.get("posted_msg_id")
+            vip_id = profile.get("vip_msg_id")
+            config = await self._get_profile_config(interaction.guild.id)
+
+            if config:
+                if posted_id and config.get("user_channel_id"):
+                    ch = interaction.guild.get_channel(config["user_channel_id"])
+                    if ch:
+                        try:
+                            m = await ch.fetch_message(posted_id)
+                            await m.delete()
+                        except Exception:
+                            pass
+
+                if vip_id and config.get("vip_channel_id"):
+                    ch = interaction.guild.get_channel(config["vip_channel_id"])
+                    if ch:
+                        try:
+                            m = await ch.fetch_message(vip_id)
+                            await m.delete()
+                        except Exception:
+                            pass
+
+        # SQLite & Redis deletion
         await self.bot.db.execute("DELETE FROM dating_profiles WHERE user_id = ?", (user.id,))
         await self.bot.db.execute("DELETE FROM profile_likes WHERE target_id = ?", (user.id,))
 
-        # 2. Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.delete(key)
@@ -428,6 +664,8 @@ class DatingProfileCog(commands.Cog):
             description=f"*✨ Welcome to {user.display_name}'s card.*",
             color=EmbedBuilder.COLOR_NEKOTINA,
             thumbnail_url=avatar_url,
+            raw_footer=True,
+            footer="Nym Profile • Click button to send heart",
         )
 
         embed.add_field(
@@ -441,11 +679,6 @@ class DatingProfileCog(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name="💖 Hearts Received",
-            value=f"**`💕 {data.get('hearts_count', 0)}`**",
-            inline=True,
-        )
-        embed.add_field(
             name="🎮 Interests & Hobbies",
             value=f"> {data.get('interests', 'N/A')}",
             inline=False,
@@ -453,6 +686,11 @@ class DatingProfileCog(commands.Cog):
         embed.add_field(
             name="📝 About Me",
             value=f">>> {data.get('bio', 'No bio provided.')}",
+            inline=False,
+        )
+        embed.add_field(
+            name="💖 Hearts Received",
+            value=f"**`💕 {data.get('hearts_count', 0)}`**",
             inline=False,
         )
 
@@ -470,6 +708,46 @@ class DatingProfileCog(commands.Cog):
     # --- Commands ---
 
     profile = discord.SlashCommandGroup("profile", "Server Dating Profile Engine and discovery controls.")
+
+    @profile.command(
+        name="setup",
+        description="[Admin Only] Set designated channels for public profile card auto-posting.",
+    )
+    async def profile_setup_slash(
+        self,
+        ctx: discord.ApplicationContext,
+        channel: discord.Option(description="Channel for all user profiles (e.g. #user-profiles)"), # type: ignore
+        vip_channel: discord.Option(description="Channel for VIP/Booster profiles (Optional)", default=None), # type: ignore
+    ):
+        """Configure public profile auto-posting channels."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
+        user_ch_id = self.resolve_channel_id(channel)
+        if not user_ch_id:
+            return await ctx.respond("❌ Invalid user profiles channel specified.", ephemeral=True)
+
+        user_ch = ctx.guild.get_channel(user_ch_id)
+        if not user_ch:
+            return await ctx.respond(f"❌ Channel with ID `{user_ch_id}` not found in this server.", ephemeral=True)
+
+        vip_ch_id = self.resolve_channel_id(vip_channel)
+        vip_ch = ctx.guild.get_channel(vip_ch_id) if vip_ch_id else None
+
+        await self._set_profile_config(
+            guild_id=ctx.guild.id,
+            user_channel_id=user_ch.id,
+            vip_channel_id=vip_ch.id if vip_ch else None,
+        )
+
+        embed = EmbedBuilder.success(
+            title="Profile Auto-Posting Configured",
+            description=f"✧ **User Profiles Channel:** {user_ch.mention}\n"
+                        f"• **VIP / Booster Channel:** {vip_ch.mention if vip_ch else '`Not Configured`'}\n\n"
+                        f"✨ User profiles will now automatically post and update in these channels with interactive heart buttons!",
+            author=ctx.author,
+        )
+        await ctx.respond(embed=embed, ephemeral=True)
 
     @profile.command(name="panel", description="Post the interactive Dating Profile Portal panel to the channel.")
     async def profile_panel_slash(
@@ -548,6 +826,9 @@ class DatingProfileCog(commands.Cog):
         success, new_count, msg = await self.send_heart(ctx.author.id, member.id, ctx.guild.id)
         if success:
             await ctx.respond(f"💕 You sent a heart to {member.mention}! Total Hearts: `{new_count}`")
+            profile = await self.get_user_profile(member.id)
+            if profile:
+                await self.sync_public_profile_posts(ctx.guild, member, profile)
         else:
             await ctx.respond(f"⚠️ {msg}", ephemeral=True)
 
@@ -555,10 +836,18 @@ class DatingProfileCog(commands.Cog):
 
     @commands.command(name="profile", aliases=["p", "card"])
     async def profile_prefix(self, ctx: commands.Context, member: Optional[discord.Member] = None):
-        """Prefix command fallback (!profile [user] / !profile panel / !profile discover)."""
-        target_member = member or ctx.author
+        """Prefix command fallback (!profile [user] / !profile panel / !profile setup #channel [#vip])."""
+        clean_text = ctx.message.content.lower().strip()
 
-        if ctx.message.content.lower().strip().endswith("panel") and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
+        if "setup" in clean_text and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
+            if len(ctx.message.channel_mentions) > 0:
+                user_ch = ctx.message.channel_mentions[0]
+                vip_ch = ctx.message.channel_mentions[1] if len(ctx.message.channel_mentions) > 1 else None
+                await self._set_profile_config(ctx.guild.id, user_channel_id=user_ch.id, vip_channel_id=vip_ch.id if vip_ch else None)
+                return await ctx.send(f"✧ Public profiles channel set to {user_ch.mention}.")
+            return await ctx.send("⚠️ Usage: `!profile setup #user-profiles [#vip-profiles]`.")
+
+        if clean_text.endswith("panel") and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
             embed = EmbedBuilder.base(
                 title="👤 Your Dating Profile",
                 description="*Create your Server Profile so others can get to know you. Explore profiles around the server and send a heart to people you like.* 💕\n\n"
@@ -568,6 +857,7 @@ class DatingProfileCog(commands.Cog):
             view = DatingProfilePanelView(self.bot, self)
             return await ctx.channel.send(embed=embed, view=view)
 
+        target_member = member or ctx.author
         profile = await self.get_user_profile(target_member.id)
         if not profile:
             return await ctx.send(f"⚠️ {target_member.mention} hasn't created a Dating Profile yet.")

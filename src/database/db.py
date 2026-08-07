@@ -151,6 +151,8 @@ class DatabaseManager:
                 interests TEXT,
                 image_url TEXT,
                 hearts_count INTEGER DEFAULT 0,
+                posted_msg_id INTEGER,
+                vip_msg_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -169,7 +171,27 @@ class DatabaseManager:
             """
         )
 
+        # Table: Profile Configs (Channels)
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profile_configs (
+                guild_id INTEGER PRIMARY KEY,
+                user_channel_id INTEGER,
+                vip_channel_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Migrations for existing DB
+        for col in ["posted_msg_id", "vip_msg_id"]:
+            try:
+                await self._db.execute(f"ALTER TABLE dating_profiles ADD COLUMN {col} INTEGER")
+            except Exception:
+                pass
+
         await self._db.commit()
+
 
 
 
