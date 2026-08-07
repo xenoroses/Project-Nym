@@ -36,10 +36,12 @@ class EmbedBuilder:
             avatar_url = author.display_avatar.url if hasattr(author, "display_avatar") else None
             embed.set_author(name=f"Requested by {author.display_name}", icon_url=avatar_url)
 
-        if footer:
-            embed.set_footer(text=footer)
+        if footer is not None:
+            if footer:
+                embed.set_footer(text=footer)
         else:
             embed.set_footer(text="Type /help or nym help")
+
 
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)

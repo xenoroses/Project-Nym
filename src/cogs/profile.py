@@ -286,6 +286,12 @@ class DatingProfileCog(commands.Cog):
         if profile:
             profile["hearts_count"] = new_count
             target_member = interaction.guild.get_member(target_id)
+            if not target_member:
+                try:
+                    target_member = await self.bot.fetch_user(target_id)
+                except Exception:
+                    target_member = None
+
             if target_member:
                 embed = self.build_profile_embed(target_member, profile)
                 view = discord.ui.View(timeout=None)
@@ -318,7 +324,7 @@ class DatingProfileCog(commands.Cog):
                 return int(s)
         return None
 
-    def is_vip_or_booster(self, member: discord.Member) -> bool:
+    def is_vip_or_booster(self, member: Union[discord.Member, discord.User]) -> bool:
         """Check if a member holds a VIP or Booster role."""
         if not hasattr(member, "roles"):
             return False
@@ -440,7 +446,7 @@ class DatingProfileCog(commands.Cog):
 
         return None
 
-    async def sync_public_profile_posts(self, guild: discord.Guild, member: discord.Member, data: dict):
+    async def sync_public_profile_posts(self, guild: discord.Guild, member: Union[discord.Member, discord.User], data: dict):
         """Auto-post or update public profile cards in #user-profiles and #vip-profiles."""
         config = await self._get_profile_config(guild.id)
         if not config:
@@ -463,6 +469,12 @@ class DatingProfileCog(commands.Cog):
         user_ch_id = config.get("user_channel_id")
         if user_ch_id:
             user_ch = guild.get_channel(user_ch_id)
+            if not user_ch:
+                try:
+                    user_ch = await guild.fetch_channel(user_ch_id)
+                except Exception:
+                    user_ch = None
+
             if user_ch:
                 posted_id = data.get("posted_msg_id")
                 msg_obj = None
@@ -488,6 +500,12 @@ class DatingProfileCog(commands.Cog):
         vip_ch_id = config.get("vip_channel_id")
         if vip_ch_id and self.is_vip_or_booster(member):
             vip_ch = guild.get_channel(vip_ch_id)
+            if not vip_ch:
+                try:
+                    vip_ch = await guild.fetch_channel(vip_ch_id)
+                except Exception:
+                    vip_ch = None
+
             if vip_ch:
                 vip_id = data.get("vip_msg_id")
                 msg_obj = None
@@ -588,6 +606,11 @@ class DatingProfileCog(commands.Cog):
             if config:
                 if posted_id and config.get("user_channel_id"):
                     ch = interaction.guild.get_channel(config["user_channel_id"])
+                    if not ch:
+                        try:
+                            ch = await interaction.guild.fetch_channel(config["user_channel_id"])
+                        except Exception:
+                            ch = None
                     if ch:
                         try:
                             m = await ch.fetch_message(posted_id)
@@ -597,6 +620,11 @@ class DatingProfileCog(commands.Cog):
 
                 if vip_id and config.get("vip_channel_id"):
                     ch = interaction.guild.get_channel(config["vip_channel_id"])
+                    if not ch:
+                        try:
+                            ch = await interaction.guild.fetch_channel(config["vip_channel_id"])
+                        except Exception:
+                            ch = None
                     if ch:
                         try:
                             m = await ch.fetch_message(vip_id)
@@ -660,13 +688,12 @@ class DatingProfileCog(commands.Cog):
         avatar_url = user.display_avatar.url if hasattr(user, "display_avatar") else user.default_avatar.url
 
         embed = EmbedBuilder.base(
-            title=f"🌸 Server Profile — {user.display_name}",
+            title=f"👤 Server Profile — {user.display_name}",
             description=f"*✨ Welcome to {user.display_name}'s card.*",
             color=EmbedBuilder.COLOR_NEKOTINA,
             thumbnail_url=avatar_url,
             footer="Click button to send heart",
         )
-
 
         embed.add_field(
             name="👤 Identity & Pronouns",
@@ -729,10 +756,21 @@ class DatingProfileCog(commands.Cog):
 
         user_ch = ctx.guild.get_channel(user_ch_id)
         if not user_ch:
+            try:
+                user_ch = await ctx.guild.fetch_channel(user_ch_id)
+            except Exception:
+                user_ch = None
+
+        if not user_ch:
             return await ctx.respond(f"❌ Channel with ID `{user_ch_id}` not found in this server.", ephemeral=True)
 
         vip_ch_id = self.resolve_channel_id(vip_channel)
         vip_ch = ctx.guild.get_channel(vip_ch_id) if vip_ch_id else None
+        if vip_ch_id and not vip_ch:
+            try:
+                vip_ch = await ctx.guild.fetch_channel(vip_ch_id)
+            except Exception:
+                vip_ch = None
 
         await self._set_profile_config(
             guild_id=ctx.guild.id,
@@ -740,10 +778,26 @@ class DatingProfileCog(commands.Cog):
             vip_channel_id=vip_ch.id if vip_ch else None,
         )
 
+        # Retro-active sync for existing profiles in database
+        rows = await self.bot.db.fetch_all("SELECT * FROM dating_profiles WHERE guild_id = ?", (ctx.guild.id,))
+        synced_count = 0
+        for row in rows:
+            p_data = dict(row)
+            mem = ctx.guild.get_member(p_data["user_id"])
+            if not mem:
+                try:
+                    mem = await self.bot.fetch_user(p_data["user_id"])
+                except Exception:
+                    mem = None
+            if mem:
+                await self.sync_public_profile_posts(ctx.guild, mem, p_data)
+                synced_count += 1
+
         embed = EmbedBuilder.success(
             title="Profile Auto-Posting Configured",
             description=f"✧ **User Profiles Channel:** {user_ch.mention}\n"
-                        f"• **VIP / Booster Channel:** {vip_ch.mention if vip_ch else '`Not Configured`'}\n\n"
+                        f"• **VIP / Booster Channel:** {vip_ch.mention if vip_ch else '`Not Configured`'}\n"
+                        f"• **Profiles Synced Now:** `{synced_count}` profile(s)\n\n"
                         f"✨ User profiles will now automatically post and update in these channels with interactive heart buttons!",
             author=ctx.author,
         )
@@ -768,6 +822,7 @@ class DatingProfileCog(commands.Cog):
             description="*Create your Server Profile so others can get to know you. Explore profiles around the server and send a heart to people you like.* 💕\n\n"
                         "**Create and manage your profile below!**",
             color=EmbedBuilder.COLOR_NEKOTINA,
+            footer="",
         )
         view = DatingProfilePanelView(self.bot, self)
 
@@ -844,7 +899,22 @@ class DatingProfileCog(commands.Cog):
                 user_ch = ctx.message.channel_mentions[0]
                 vip_ch = ctx.message.channel_mentions[1] if len(ctx.message.channel_mentions) > 1 else None
                 await self._set_profile_config(ctx.guild.id, user_channel_id=user_ch.id, vip_channel_id=vip_ch.id if vip_ch else None)
-                return await ctx.send(f"✧ Public profiles channel set to {user_ch.mention}.")
+                
+                rows = await self.bot.db.fetch_all("SELECT * FROM dating_profiles WHERE guild_id = ?", (ctx.guild.id,))
+                synced_count = 0
+                for row in rows:
+                    p_data = dict(row)
+                    mem = ctx.guild.get_member(p_data["user_id"])
+                    if not mem:
+                        try:
+                            mem = await self.bot.fetch_user(p_data["user_id"])
+                        except Exception:
+                            mem = None
+                    if mem:
+                        await self.sync_public_profile_posts(ctx.guild, mem, p_data)
+                        synced_count += 1
+
+                return await ctx.send(f"✧ Public profiles channel set to {user_ch.mention} (`{synced_count}` profiles synced).")
             return await ctx.send("⚠️ Usage: `!profile setup #user-profiles [#vip-profiles]`.")
 
         if clean_text.endswith("panel") and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
@@ -853,6 +923,7 @@ class DatingProfileCog(commands.Cog):
                 description="*Create your Server Profile so others can get to know you. Explore profiles around the server and send a heart to people you like.* 💕\n\n"
                             "**Create and manage your profile below!**",
                 color=EmbedBuilder.COLOR_NEKOTINA,
+                footer="",
             )
             view = DatingProfilePanelView(self.bot, self)
             return await ctx.channel.send(embed=embed, view=view)
