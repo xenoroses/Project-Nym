@@ -35,9 +35,13 @@ class EmbedBuilder:
             embed.set_author(name=f"Requested by {author.display_name}", icon_url=avatar_url)
 
         if footer:
-            embed.set_footer(text=f"Nym Protocol • {footer}")
+            if footer.startswith("Nym Protocol"):
+                embed.set_footer(text=footer)
+            else:
+                embed.set_footer(text=f"Nym Protocol • {footer}")
         else:
             embed.set_footer(text="Nym Protocol • Type /help or nym help")
+
 
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)

@@ -7,8 +7,10 @@ from typing import Optional, Union, List, Any
 import discord
 from discord.ext import commands
 from src.utils.embeds import EmbedBuilder
+from src.utils.checks import is_trusted_admin
 
 logger = logging.getLogger("Nym")
+
 
 
 class ConfessionModal(discord.ui.Modal):
@@ -228,8 +230,9 @@ class ConfessionCog(commands.Cog):
             title=f"Anonymous Confession #{new_count}",
             description=content,
             color=EmbedBuilder.COLOR_NEKOTINA,
-            footer="Nym Protocol • Type /confess or click button to submit",
+            footer="Type /confess or click button to submit",
         )
+
         try:
             await confession_ch.send(embed=public_embed)
         except Exception as e:
@@ -417,17 +420,50 @@ class ConfessionCog(commands.Cog):
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
+    @confess.command(
+        name="reset",
+        description="[Admin/Trusted Only] Reset or set the anonymous confession counter for this server.",
+    )
+    async def confess_reset(
+        self,
+        ctx: discord.ApplicationContext,
+        count: int = discord.Option(description="New starting confession count (Defaults to 0)", default=0),
+    ):
+        """Reset or set the server confession counter."""
+        if not await is_trusted_admin(ctx) and not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels**, **Administrator**, or Trusted Admin status to reset counter.", ephemeral=True)
+
+        if count < 0:
+            return await ctx.respond("❌ Confession count cannot be negative.", ephemeral=True)
+
+        await self._set_guild_config(guild_id=ctx.guild.id, count=count)
+
+        embed = EmbedBuilder.success(
+            title="Confession Counter Reset",
+            description=f"✨ Anonymous confession counter has been reset to **#{count}** for this server.",
+            author=ctx.author,
+        )
+        await ctx.respond(embed=embed, ephemeral=True)
+
     # --- Prefix Commands Fallback ---
 
     @commands.command(name="confess")
     async def confess_prefix(self, ctx: commands.Context, *, message: Optional[str] = None):
-        """Prefix command fallback (!confess <message> / nym confess setup <#channel> / !confess trace <id>)."""
+        """Prefix command fallback (!confess <message> / nym confess setup <#channel> / !confess trace <id> / !confess reset [count])."""
         if not message:
             return await ctx.send("⚠️ Usage: `!confess <your confession>` or `/confess send`.")
 
         clean_text = message.strip()
         args = clean_text.split()
         sub = args[0].lower()
+
+        if sub == "reset" and (await is_trusted_admin(ctx) or ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
+            new_val = 0
+            if len(args) > 1 and args[1].isdigit():
+                new_val = int(args[1])
+            await self._set_guild_config(ctx.guild.id, count=new_val)
+            return await ctx.send(f"✨ Confession counter reset to **#{new_val}**.")
+
 
         if sub == "setup" and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
             if len(ctx.message.channel_mentions) > 0:
