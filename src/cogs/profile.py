@@ -448,6 +448,9 @@ class DatingProfileCog(commands.Cog):
 
     async def sync_public_profile_posts(self, guild: discord.Guild, member: Union[discord.Member, discord.User], data: dict):
         """Auto-post or update public profile cards in #user-profiles and #vip-profiles."""
+        if not guild:
+            return
+
         config = await self._get_profile_config(guild.id)
         if not config:
             return
@@ -468,11 +471,12 @@ class DatingProfileCog(commands.Cog):
         # 1. Main User Profiles Channel
         user_ch_id = config.get("user_channel_id")
         if user_ch_id:
-            user_ch = guild.get_channel(user_ch_id)
+            user_ch = guild.get_channel(user_ch_id) or self.bot.get_channel(user_ch_id)
             if not user_ch:
                 try:
-                    user_ch = await guild.fetch_channel(user_ch_id)
-                except Exception:
+                    user_ch = await self.bot.fetch_channel(user_ch_id)
+                except Exception as e:
+                    logger.error(f"Failed to fetch user_ch {user_ch_id}: {e}")
                     user_ch = None
 
             if user_ch:
@@ -494,16 +498,17 @@ class DatingProfileCog(commands.Cog):
                             (new_msg.id, target_id),
                         )
                     except Exception as e:
-                        logger.warning(f"Failed sending public profile in {user_ch.id}: {e}")
+                        logger.error(f"Failed sending public profile in channel {user_ch.id}: {e}")
 
         # 2. VIP / Booster Profiles Channel
         vip_ch_id = config.get("vip_channel_id")
         if vip_ch_id and self.is_vip_or_booster(member):
-            vip_ch = guild.get_channel(vip_ch_id)
+            vip_ch = guild.get_channel(vip_ch_id) or self.bot.get_channel(vip_ch_id)
             if not vip_ch:
                 try:
-                    vip_ch = await guild.fetch_channel(vip_ch_id)
-                except Exception:
+                    vip_ch = await self.bot.fetch_channel(vip_ch_id)
+                except Exception as e:
+                    logger.error(f"Failed to fetch vip_ch {vip_ch_id}: {e}")
                     vip_ch = None
 
             if vip_ch:
@@ -525,7 +530,7 @@ class DatingProfileCog(commands.Cog):
                             (new_msg.id, target_id),
                         )
                     except Exception as e:
-                        logger.warning(f"Failed sending VIP profile in {vip_ch.id}: {e}")
+                        logger.error(f"Failed sending VIP profile in channel {vip_ch.id}: {e}")
 
     async def save_user_profile(
         self,
@@ -583,8 +588,15 @@ class DatingProfileCog(commands.Cog):
                 logger.warning(f"Upstash set failed for profile {user.id}: {e}")
 
         # 3. Auto-post or update in public channels
-        member_obj = guild.get_member(user.id) or user
-        await self.sync_public_profile_posts(guild, member_obj, data)
+        member_obj = guild.get_member(user.id) if guild else None
+        if not member_obj:
+            try:
+                member_obj = await self.bot.fetch_user(user.id)
+            except Exception:
+                member_obj = user
+
+        if guild:
+            await self.sync_public_profile_posts(guild, member_obj, data)
 
         embed = self.build_profile_embed(user, data)
         msg = "✨ **Your Server Dating Profile has been updated successfully!**"
@@ -605,10 +617,10 @@ class DatingProfileCog(commands.Cog):
 
             if config:
                 if posted_id and config.get("user_channel_id"):
-                    ch = interaction.guild.get_channel(config["user_channel_id"])
+                    ch = interaction.guild.get_channel(config["user_channel_id"]) or self.bot.get_channel(config["user_channel_id"])
                     if not ch:
                         try:
-                            ch = await interaction.guild.fetch_channel(config["user_channel_id"])
+                            ch = await self.bot.fetch_channel(config["user_channel_id"])
                         except Exception:
                             ch = None
                     if ch:
@@ -619,10 +631,10 @@ class DatingProfileCog(commands.Cog):
                             pass
 
                 if vip_id and config.get("vip_channel_id"):
-                    ch = interaction.guild.get_channel(config["vip_channel_id"])
+                    ch = interaction.guild.get_channel(config["vip_channel_id"]) or self.bot.get_channel(config["vip_channel_id"])
                     if not ch:
                         try:
-                            ch = await interaction.guild.fetch_channel(config["vip_channel_id"])
+                            ch = await self.bot.fetch_channel(config["vip_channel_id"])
                         except Exception:
                             ch = None
                     if ch:
@@ -754,10 +766,10 @@ class DatingProfileCog(commands.Cog):
         if not user_ch_id:
             return await ctx.respond("❌ Invalid user profiles channel specified.", ephemeral=True)
 
-        user_ch = ctx.guild.get_channel(user_ch_id)
+        user_ch = ctx.guild.get_channel(user_ch_id) or self.bot.get_channel(user_ch_id)
         if not user_ch:
             try:
-                user_ch = await ctx.guild.fetch_channel(user_ch_id)
+                user_ch = await self.bot.fetch_channel(user_ch_id)
             except Exception:
                 user_ch = None
 
@@ -765,10 +777,10 @@ class DatingProfileCog(commands.Cog):
             return await ctx.respond(f"❌ Channel with ID `{user_ch_id}` not found in this server.", ephemeral=True)
 
         vip_ch_id = self.resolve_channel_id(vip_channel)
-        vip_ch = ctx.guild.get_channel(vip_ch_id) if vip_ch_id else None
+        vip_ch = ctx.guild.get_channel(vip_ch_id) or self.bot.get_channel(vip_ch_id) if vip_ch_id else None
         if vip_ch_id and not vip_ch:
             try:
-                vip_ch = await ctx.guild.fetch_channel(vip_ch_id)
+                vip_ch = await self.bot.fetch_channel(vip_ch_id)
             except Exception:
                 vip_ch = None
 
