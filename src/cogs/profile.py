@@ -664,9 +664,9 @@ class DatingProfileCog(commands.Cog):
             description=f"*✨ Welcome to {user.display_name}'s card.*",
             color=EmbedBuilder.COLOR_NEKOTINA,
             thumbnail_url=avatar_url,
-            raw_footer=True,
-            footer="Nym Profile • Click button to send heart",
+            footer="Click button to send heart",
         )
+
 
         embed.add_field(
             name="👤 Identity & Pronouns",

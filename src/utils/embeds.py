@@ -22,28 +22,24 @@ class EmbedBuilder:
         author: Optional[Union[discord.User, discord.Member]] = None,
         footer: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
-        raw_footer: bool = False,
+        include_timestamp: bool = True,
     ) -> discord.Embed:
         """Create a styled base embed matching Nekotina visual guidelines."""
+        ts = datetime.datetime.now(datetime.timezone.utc) if include_timestamp else None
         embed = discord.Embed(
             title=title,
             description=description,
             color=color,
-            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            timestamp=ts,
         )
         if author:
             avatar_url = author.display_avatar.url if hasattr(author, "display_avatar") else None
             embed.set_author(name=f"Requested by {author.display_name}", icon_url=avatar_url)
 
         if footer:
-            if raw_footer or footer.startswith("Nym Protocol"):
-                embed.set_footer(text=footer)
-            else:
-                embed.set_footer(text=f"Nym Protocol • {footer}")
+            embed.set_footer(text=footer)
         else:
-            embed.set_footer(text="Nym Protocol • Type /help or nym help")
-
-
+            embed.set_footer(text="Type /help or nym help")
 
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)

@@ -231,8 +231,9 @@ class ConfessionCog(commands.Cog):
             description=content,
             color=EmbedBuilder.COLOR_NEKOTINA,
             footer="Type /confess or click button to submit",
-            raw_footer=True,
+            include_timestamp=False,
         )
+
 
 
         try:
