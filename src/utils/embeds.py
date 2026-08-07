@@ -22,7 +22,7 @@ class EmbedBuilder:
         author: Optional[Union[discord.User, discord.Member]] = None,
         footer: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
-        include_timestamp: bool = True,
+        include_timestamp: bool = False,
     ) -> discord.Embed:
         """Create a styled base embed matching Nekotina visual guidelines."""
         ts = datetime.datetime.now(datetime.timezone.utc) if include_timestamp else None
@@ -32,6 +32,7 @@ class EmbedBuilder:
             color=color,
             timestamp=ts,
         )
+
         if author:
             avatar_url = author.display_avatar.url if hasattr(author, "display_avatar") else None
             embed.set_author(name=f"Requested by {author.display_name}", icon_url=avatar_url)
