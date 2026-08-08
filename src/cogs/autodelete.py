@@ -78,7 +78,6 @@ class AutoDeleteCog(commands.Cog):
         """Fetch autodelete config for a channel from Redis or SQLite."""
         key = f"autodelete:config:{channel_id}"
 
-        # 1. Try Upstash Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 raw_data = await self.bot.upstash.get(key)
@@ -91,7 +90,6 @@ class AutoDeleteCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Upstash read failed for autodelete config {channel_id}: {e}")
 
-        # 2. SQLite Fallback
         try:
             row = await self.bot.db.fetch_one(
                 "SELECT * FROM autodelete_configs WHERE channel_id = ?",
@@ -132,7 +130,6 @@ class AutoDeleteCog(commands.Cog):
             "exempt_admins": True,
         }
 
-        # 1. SQLite
         await self.bot.db.execute(
             """
             INSERT INTO autodelete_configs (channel_id, guild_id, enabled, duration_seconds, filter_mode)
@@ -145,7 +142,6 @@ class AutoDeleteCog(commands.Cog):
             (channel_id, guild_id, duration_seconds, filter_mode)
         )
 
-        # 2. Upstash Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.set(key, json.dumps(data))
@@ -156,13 +152,11 @@ class AutoDeleteCog(commands.Cog):
         """Disable autodelete for a channel in SQLite DB and Upstash Redis."""
         key = f"autodelete:config:{channel_id}"
 
-        # 1. SQLite
         await self.bot.db.execute(
             "UPDATE autodelete_configs SET enabled = 0 WHERE channel_id = ?",
             (channel_id,)
         )
 
-        # 2. Upstash Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.set(key, json.dumps({"disabled": True}), ex_seconds=86400)
@@ -174,20 +168,16 @@ class AutoDeleteCog(commands.Cog):
         if not config.get("enabled"):
             return False
 
-        # Exempt Pinned Messages
         if config.get("exempt_pinned", True) and message.pinned:
             return False
 
-        # Exempt Bot Messages
         if message.author.bot and config.get("exempt_bots", True):
             return False
 
-        # Exempt Admin Messages
         if isinstance(message.author, discord.Member) and config.get("exempt_admins", True):
             if message.author.guild_permissions.administrator or message.author.guild_permissions.manage_guild:
                 return False
 
-        # Filter Modes
         fmode = config.get("filter_mode", "all")
         content = message.content or ""
 
@@ -208,12 +198,11 @@ class AutoDeleteCog(commands.Cog):
 
         return True
 
-    # --- Commands ---
+    # --- Consolidated Subcommand Group ---
 
     autodelete = discord.SlashCommandGroup("autodelete", "EazyAutodelete channel message cleanup controls.")
 
     @autodelete.command(name="set", description="Configure automatic message deletion for this channel.")
-    @commands.has_permissions(manage_channels=True)
     async def autodelete_set(
         self,
         ctx: discord.ApplicationContext,
@@ -226,6 +215,9 @@ class AutoDeleteCog(commands.Cog):
         )
     ):
         """Set up autodelete duration and filter for a channel."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
         target_ch = channel or ctx.channel
         seconds = parse_duration_to_seconds(duration)
 
@@ -262,13 +254,15 @@ class AutoDeleteCog(commands.Cog):
         await ctx.respond(embed=embed, ephemeral=True)
 
     @autodelete.command(name="off", description="Turn off automatic message deletion in a channel.")
-    @commands.has_permissions(manage_channels=True)
     async def autodelete_off(
         self,
         ctx: discord.ApplicationContext,
         channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
     ):
         """Disable autodelete in a channel."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
         target_ch = channel or ctx.channel
         await self._disable_channel_config(target_ch.id)
 
@@ -314,9 +308,11 @@ class AutoDeleteCog(commands.Cog):
     # --- Prefix Commands Fallback ---
 
     @commands.command(name="autodelete", aliases=["autoclean", "ad"])
-    @commands.has_permissions(manage_channels=True)
     async def autodelete_prefix(self, ctx: commands.Context, duration: str = "status", filter_mode: str = "all"):
         """Prefix command fallback (!autodelete <duration> [filter] / nym autodelete <duration>)."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.send("❌ You need **Manage Channels** or **Administrator** permission.")
+
         duration_clean = duration.strip().lower()
 
         if duration_clean == "status":
@@ -351,7 +347,6 @@ class AutoDeleteCog(commands.Cog):
         if not message.guild or message.author.bot:
             return
 
-        # Skip commands
         content = message.content.strip().lower()
         if content.startswith("!") or content.startswith("nym ") or content.startswith("/"):
             return
@@ -362,7 +357,6 @@ class AutoDeleteCog(commands.Cog):
 
         duration_seconds = config.get("duration_seconds", 3600)
 
-        # Instant deletion
         if duration_seconds == 0:
             try:
                 await message.delete()
@@ -370,7 +364,6 @@ class AutoDeleteCog(commands.Cog):
                 pass
             return
 
-        # Delayed deletion queue
         delete_at = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
         try:
             await self.bot.db.execute(

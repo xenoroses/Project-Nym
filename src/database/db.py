@@ -183,6 +183,19 @@ class DatabaseManager:
             """
         )
 
+        # Table: NymLock Access (Granted trusted users)
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nymlock_access (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                granted_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, user_id)
+            )
+            """
+        )
+
         # Migrations for existing DB
         for col in ["posted_msg_id", "vip_msg_id"]:
             try:
@@ -191,6 +204,7 @@ class DatabaseManager:
                 pass
 
         await self._db.commit()
+
 
 
 

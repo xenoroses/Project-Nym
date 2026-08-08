@@ -4,11 +4,11 @@ import logging
 import random
 import re
 from datetime import datetime, timezone
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 import discord
 from discord.ext import commands
-from src.utils.checks import is_trusted_admin
+from src.utils.checks import is_trusted_admin, TRUSTED_ADMIN_IDS
 from src.utils.embeds import EmbedBuilder
 
 logger = logging.getLogger("Nym")
@@ -28,7 +28,6 @@ def nym_uwuify(text: str) -> str:
     if not text:
         return text
 
-    # Pattern to capture URLs, Discord mentions (<@123>, <#123>, <@&123>), and custom emojis (<:name:123>, <a:name:123>)
     token_pattern = re.compile(
         r'(https?://\S+|<@!?\d+>|<#\d+>|<@&\d+>|<a?:\w+:\d+>)'
     )
@@ -37,7 +36,6 @@ def nym_uwuify(text: str) -> str:
     transformed_parts = []
 
     for idx, part in enumerate(parts):
-        # Odd indices are matched protected tokens
         if idx % 2 == 1:
             transformed_parts.append(part)
         else:
@@ -45,18 +43,15 @@ def nym_uwuify(text: str) -> str:
                 continue
 
             s = part
-            # 1. Phonetic Replacements
             s = re.sub(r'r', 'w', s)
             s = re.sub(r'l', 'w', s)
             s = re.sub(r'R', 'W', s)
             s = re.sub(r'L', 'W', s)
 
-            # 2. Nyification (n + vowel)
             s = re.sub(r'n([aeiou])', r'ny\1', s)
             s = re.sub(r'N([aeiou])', r'Ny\1', s)
             s = re.sub(r'N([AEIOU])', r'NY\1', s)
 
-            # 3. Softening consonant clusters
             s = re.sub(r'\bthe\b', 'de', s, flags=re.IGNORECASE)
             s = re.sub(r'\bthis\b', 'dis', s, flags=re.IGNORECASE)
             s = re.sub(r'\bthat\b', 'dat', s, flags=re.IGNORECASE)
@@ -64,7 +59,6 @@ def nym_uwuify(text: str) -> str:
             s = re.sub(r'TH', 'F', s)
             s = re.sub(r'ove', 'uv', s)
 
-            # 4. Word Stuttering
             words = s.split(' ')
             stuttered_words = []
             for word in words:
@@ -73,7 +67,6 @@ def nym_uwuify(text: str) -> str:
                 stuttered_words.append(word)
             s = ' '.join(stuttered_words)
 
-            # 5. Sentence kaomoji suffixes
             def add_kaomoji(match):
                 punct = match.group(0)
                 kaomoji = random.choice(KAOMOJI_SUFFIXES)
@@ -94,19 +87,102 @@ class NymLockCog(commands.Cog):
     """Intense Speech Lock Engine (NymLock).
 
     Locks target members into forced UwU speech mode using webhook impersonation.
-    Restricted EXCLUSIVELY to Bot Owner and Trusted Bot Admins.
+    Supports NymLock access delegation for trusted staff members.
     """
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # --- Storage Helpers (Upstash Redis + SQLite) ---
+    # --- Permission & Access Helpers ---
+
+    async def _has_granted_access(self, guild_id: int, user_id: int) -> bool:
+        """Check if user has granted NymLock access in DB/Redis."""
+        key = f"nymlock:access:{guild_id}:{user_id}"
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                raw_data = await self.bot.upstash.get(key)
+                if raw_data:
+                    parsed = json.loads(raw_data)
+                    if isinstance(parsed, dict):
+                        return not parsed.get("disabled")
+            except Exception:
+                pass
+
+        try:
+            row = await self.bot.db.fetch_one(
+                "SELECT 1 FROM nymlock_access WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id)
+            )
+            return bool(row)
+        except Exception:
+            return False
+
+    async def _has_nymlock_permission(self, user: Union[discord.User, discord.Member], guild: discord.Guild) -> bool:
+        """Check if a user is authorized to use /nymlock lock and unlock."""
+        if user.id == 456811056090578975 or user.id in TRUSTED_ADMIN_IDS:
+            return True
+
+        if isinstance(user, discord.Member):
+            if user.guild_permissions.administrator or user.guild_permissions.manage_guild:
+                return True
+
+        return await self._has_granted_access(guild.id, user.id)
+
+    async def _can_grant_access(self, user: Union[discord.User, discord.Member]) -> bool:
+        """Check if user has authority to grant or revoke NymLock access."""
+        if user.id == 456811056090578975 or user.id in TRUSTED_ADMIN_IDS:
+            return True
+
+        if isinstance(user, discord.Member):
+            return user.guild_permissions.administrator or user.guild_permissions.manage_guild
+
+        return False
+
+    async def _grant_access(self, guild_id: int, user_id: int, granted_by: int):
+        """Grant NymLock access to a user."""
+        key = f"nymlock:access:{guild_id}:{user_id}"
+        await self.bot.db.execute(
+            """
+            INSERT INTO nymlock_access (guild_id, user_id, granted_by)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO UPDATE SET granted_by = excluded.granted_by
+            """,
+            (guild_id, user_id, granted_by)
+        )
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                await self.bot.upstash.set(key, json.dumps({"granted": True, "by": granted_by}))
+            except Exception:
+                pass
+
+    async def _revoke_access(self, guild_id: int, user_id: int):
+        """Revoke NymLock access from a user."""
+        key = f"nymlock:access:{guild_id}:{user_id}"
+        await self.bot.db.execute(
+            "DELETE FROM nymlock_access WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id)
+        )
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                await self.bot.upstash.delete(key)
+                await self.bot.upstash.set(key, json.dumps({"disabled": True}), ex_seconds=86400)
+            except Exception:
+                pass
+
+    async def _get_granted_users(self, guild_id: int) -> List[int]:
+        """Fetch list of user IDs granted NymLock access."""
+        rows = await self.bot.db.fetch_all(
+            "SELECT user_id FROM nymlock_access WHERE guild_id = ?",
+            (guild_id,)
+        )
+        return [row["user_id"] for row in rows]
+
+    # --- Speech Lock Helpers ---
 
     async def _is_user_locked(self, guild_id: int, user_id: int) -> bool:
         """Check if user is NymLocked via Redis or SQLite fallback."""
         key = f"nymlock:{guild_id}:{user_id}"
 
-        # 1. Redis check
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 raw_data = await self.bot.upstash.get(key)
@@ -118,7 +194,6 @@ class NymLockCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Upstash read failed for nymlock:{guild_id}:{user_id}: {e}")
 
-        # 2. SQLite check
         try:
             row = await self.bot.db.fetch_one(
                 "SELECT 1 FROM nymlock_users WHERE guild_id = ? AND user_id = ?",
@@ -135,7 +210,6 @@ class NymLockCog(commands.Cog):
         reg_key = f"nymlock:users:{guild_id}"
         data = {"locked_by": locked_by, "timestamp": datetime.now(timezone.utc).isoformat()}
 
-        # 1. SQLite
         await self.bot.db.execute(
             """
             INSERT INTO nymlock_users (guild_id, user_id, locked_by)
@@ -145,11 +219,9 @@ class NymLockCog(commands.Cog):
             (guild_id, user_id, locked_by)
         )
 
-        # 2. Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.set(key, json.dumps(data))
-                # Add to guild list cache
                 cached_list = await self.bot.upstash.get(reg_key)
                 users = json.loads(cached_list) if cached_list else []
                 if user_id not in users:
@@ -163,13 +235,11 @@ class NymLockCog(commands.Cog):
         key = f"nymlock:{guild_id}:{user_id}"
         reg_key = f"nymlock:users:{guild_id}"
 
-        # 1. SQLite
         await self.bot.db.execute(
             "DELETE FROM nymlock_users WHERE guild_id = ? AND user_id = ?",
             (guild_id, user_id)
         )
 
-        # 2. Redis
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.delete(key)
@@ -190,13 +260,15 @@ class NymLockCog(commands.Cog):
         )
         return [row["user_id"] for row in rows]
 
-    # --- Commands (Trusted Admins Only) ---
+    # --- Consolidating Subcommand Group ---
 
-    @discord.slash_command(name="nymlock", description="[Trusted Admin Only] Lock a member into forced UwU speech mode.")
-    async def nymlock_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
-        """Slash command for trusted admin speech lock."""
-        if not await is_trusted_admin(ctx):
-            embed = EmbedBuilder.error("Access Denied", "Only Bot Owner and Trusted Bot Admins can enforce NymLock.")
+    nymlock = discord.SlashCommandGroup("nymlock", "NymLock speech enforcement and access management controls.")
+
+    @nymlock.command(name="lock", description="[Authorized Only] Lock a member into forced UwU speech mode.")
+    async def nymlock_lock_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
+        """Slash command for speech lock."""
+        if not await self._has_nymlock_permission(ctx.author, ctx.guild):
+            embed = EmbedBuilder.error("Access Denied", "You do not have NymLock permissions in this server.")
             return await ctx.respond(embed=embed, ephemeral=True)
 
         if member.id == ctx.guild.owner_id:
@@ -215,11 +287,11 @@ class NymLockCog(commands.Cog):
         )
         await ctx.respond(embed=embed)
 
-    @discord.slash_command(name="nymunlock", description="[Trusted Admin Only] Unlock a member from NymLock speech mode.")
-    async def nymunlock_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
-        """Slash command for trusted admin speech unlock."""
-        if not await is_trusted_admin(ctx):
-            embed = EmbedBuilder.error("Access Denied", "Only Bot Owner and Trusted Bot Admins can lift NymLock.")
+    @nymlock.command(name="unlock", description="[Authorized Only] Unlock a member from NymLock speech mode.")
+    async def nymlock_unlock_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
+        """Slash command for speech unlock."""
+        if not await self._has_nymlock_permission(ctx.author, ctx.guild):
+            embed = EmbedBuilder.error("Access Denied", "You do not have NymLock permissions in this server.")
             return await ctx.respond(embed=embed, ephemeral=True)
 
         await self._delete_user_lock(ctx.guild.id, member.id)
@@ -233,37 +305,113 @@ class NymLockCog(commands.Cog):
         )
         await ctx.respond(embed=embed)
 
-    @discord.slash_command(name="nymlocklist", description="[Trusted Admin Only] List all NymLocked members in this server.")
-    async def nymlocklist_slash(self, ctx: discord.ApplicationContext):
-        """Slash command listing all NymLocked members."""
-        if not await is_trusted_admin(ctx):
-            embed = EmbedBuilder.error("Access Denied", "Only Bot Owner and Trusted Bot Admins can view NymLock list.")
+    @nymlock.command(name="grant", description="[Admin Only] Grant NymLock execution access to a trusted member.")
+    async def nymlock_grant_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
+        """Slash command to grant NymLock access."""
+        if not await self._can_grant_access(ctx.author):
+            embed = EmbedBuilder.error("Access Denied", "Only Administrators or Bot Admins can grant NymLock access.")
             return await ctx.respond(embed=embed, ephemeral=True)
 
-        user_ids = await self._get_locked_users(ctx.guild.id)
+        await self._grant_access(ctx.guild.id, member.id, ctx.author.id)
 
-        if not user_ids:
-            embed = EmbedBuilder.warning("No Locked Subjects", "No subjects are currently NymLocked in this server.")
+        embed = EmbedBuilder.success(
+            title="NymLock Access Granted",
+            description=f"✨ {member.mention} has been granted **NymLock Access**!\n"
+                        f"• They can now use `/nymlock lock` and `/nymlock unlock` in this server.",
+            author=ctx.author
+        )
+        await ctx.respond(embed=embed, ephemeral=True)
+
+    @nymlock.command(name="revoke", description="[Admin Only] Revoke NymLock execution access from a member.")
+    async def nymlock_revoke_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
+        """Slash command to revoke NymLock access."""
+        if not await self._can_grant_access(ctx.author):
+            embed = EmbedBuilder.error("Access Denied", "Only Administrators or Bot Admins can revoke NymLock access.")
             return await ctx.respond(embed=embed, ephemeral=True)
 
-        mentions = [f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in user_ids]
+        await self._revoke_access(ctx.guild.id, member.id)
+
+        embed = EmbedBuilder.success(
+            title="NymLock Access Revoked",
+            description=f"⌬ NymLock Access for {member.mention} has been **revoked**.",
+            author=ctx.author
+        )
+        await ctx.respond(embed=embed, ephemeral=True)
+
+    @nymlock.command(name="list", description="List all NymLocked members and staff with NymLock access.")
+    async def nymlock_list_slash(self, ctx: discord.ApplicationContext):
+        """Slash command listing NymLocked members and granted users."""
+        if not await self._has_nymlock_permission(ctx.author, ctx.guild):
+            embed = EmbedBuilder.error("Access Denied", "You do not have permission to view NymLock telemetry.")
+            return await ctx.respond(embed=embed, ephemeral=True)
+
+        locked_ids = await self._get_locked_users(ctx.guild.id)
+        granted_ids = await self._get_granted_users(ctx.guild.id)
+
+        locked_str = "\n".join([f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in locked_ids]) if locked_ids else "`None`"
+        granted_str = "\n".join([f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in granted_ids]) if granted_ids else "`None`"
 
         embed = EmbedBuilder.base(
-            title="📜 NymLocked Subjects",
-            description="\n".join(mentions),
+            title="📜 NymLock Telemetry & Roster",
+            description=f"**🔒 Currently Locked Members ({len(locked_ids)}):**\n{locked_str}\n\n"
+                        f"**✨ Staff Granted NymLock Access ({len(granted_ids)}):**\n{granted_str}",
             color=EmbedBuilder.COLOR_NEKOTINA,
             author=ctx.author,
-            footer=f"Total Locked: {len(mentions)}"
         )
         await ctx.respond(embed=embed)
 
     # --- Prefix Commands Fallback ---
 
     @commands.command(name="nymlock", aliases=["hl"])
-    async def nymlock_prefix(self, ctx: commands.Context, member: discord.Member):
-        """Prefix command fallback (!nymlock <@user> / nym nymlock <@user> / !hl <@user>)."""
-        if not await is_trusted_admin(ctx):
-            return await ctx.send("❌ **Access Denied**: Only Bot Owner and Trusted Bot Admins can enforce NymLock.")
+    async def nymlock_prefix(self, ctx: commands.Context, sub_or_member: Optional[str] = None, target: Optional[discord.Member] = None):
+        """Prefix command fallback (!nymlock <@user> / !nymlock grant <@user> / !nymlock revoke <@user> / !nymlock list)."""
+        if not sub_or_member:
+            return await ctx.send("⚠️ Usage: `!nymlock @User`, `!nymlock grant @User`, `!nymlock revoke @User`, or `!nymlock list`.")
+
+        sub_clean = sub_or_member.lower().strip()
+
+        # Subcommand: grant
+        if sub_clean == "grant":
+            if not await self._can_grant_access(ctx.author):
+                return await ctx.send("❌ **Access Denied**: Only Administrators can grant NymLock access.")
+            if not target and len(ctx.message.mentions) > 0:
+                target = ctx.message.mentions[0]
+            if not target:
+                return await ctx.send("⚠️ Please mention a user to grant access: `!nymlock grant @User`.")
+            await self._grant_access(ctx.guild.id, target.id, ctx.author.id)
+            return await ctx.send(f"✨ {target.mention} has been granted **NymLock Access**.")
+
+        # Subcommand: revoke
+        if sub_clean == "revoke":
+            if not await self._can_grant_access(ctx.author):
+                return await ctx.send("❌ **Access Denied**: Only Administrators can revoke NymLock access.")
+            if not target and len(ctx.message.mentions) > 0:
+                target = ctx.message.mentions[0]
+            if not target:
+                return await ctx.send("⚠️ Please mention a user to revoke access: `!nymlock revoke @User`.")
+            await self._revoke_access(ctx.guild.id, target.id)
+            return await ctx.send(f"⌬ NymLock Access for {target.mention} has been **revoked**.")
+
+        # Subcommand: list
+        if sub_clean in ["list", "roster", "telemetry"]:
+            if not await self._has_nymlock_permission(ctx.author, ctx.guild):
+                return await ctx.send("❌ **Access Denied**: You do not have permission to view NymLock roster.")
+            locked_ids = await self._get_locked_users(ctx.guild.id)
+            granted_ids = await self._get_granted_users(ctx.guild.id)
+            locked_str = ", ".join([ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f"`ID: {uid}`" for uid in locked_ids]) if locked_ids else "None"
+            granted_str = ", ".join([ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f"`ID: {uid}`" for uid in granted_ids]) if granted_ids else "None"
+            return await ctx.send(f"📜 **NymLock Roster**:\n• **Locked**: {locked_str}\n• **Granted Staff**: {granted_str}")
+
+        # Default action: speech lock member
+        member = target or (ctx.message.mentions[0] if ctx.message.mentions else None)
+        if not member and sub_or_member.isdigit():
+            member = ctx.guild.get_member(int(sub_or_member))
+
+        if not member:
+            return await ctx.send("⚠️ Please specify a target user: `!nymlock @User`.")
+
+        if not await self._has_nymlock_permission(ctx.author, ctx.guild):
+            return await ctx.send("❌ **Access Denied**: You do not have NymLock permission.")
 
         if member.id == ctx.guild.owner_id:
             return await ctx.send("⚠️ The Guild Owner cannot be NymLocked.")
@@ -280,41 +428,24 @@ class NymLockCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="nymunlock", aliases=["hul"])
-    async def nymunlock_prefix(self, ctx: commands.Context, member: discord.Member):
+    async def nymunlock_prefix(self, ctx: commands.Context, member: Optional[discord.Member] = None):
         """Prefix command fallback (!nymunlock <@user> / !hul <@user>)."""
-        if not await is_trusted_admin(ctx):
-            return await ctx.send("❌ **Access Denied**: Only Bot Owner and Trusted Bot Admins can lift NymLock.")
+        target = member or (ctx.message.mentions[0] if ctx.message.mentions else None)
+        if not target:
+            return await ctx.send("⚠️ Please mention a user to unlock: `!nymunlock @User`.")
 
-        await self._delete_user_lock(ctx.guild.id, member.id)
+        if not await self._has_nymlock_permission(ctx.author, ctx.guild):
+            return await ctx.send("❌ **Access Denied**: You do not have NymLock permission.")
+
+        await self._delete_user_lock(ctx.guild.id, target.id)
         embed = EmbedBuilder.base(
             title="✧ NymLock Released",
-            description=f"✧ **Subject**: {member.mention} speech lock has been **lifted**.\n"
+            description=f"✧ **Subject**: {target.mention} speech lock has been **lifted**.\n"
                         f"• **Enforcer**: {ctx.author.mention}",
             color=EmbedBuilder.COLOR_SUCCESS,
             author=ctx.author
         )
         await ctx.send(embed=embed)
-
-    @commands.command(name="nymlocklist", aliases=["hll"])
-    async def nymlocklist_prefix(self, ctx: commands.Context):
-        """Prefix command fallback (!nymlocklist / !hll)."""
-        if not await is_trusted_admin(ctx):
-            return await ctx.send("❌ **Access Denied**: Only Bot Owner and Trusted Bot Admins can view NymLock list.")
-
-        user_ids = await self._get_locked_users(ctx.guild.id)
-        if not user_ids:
-            return await ctx.send("⚠️ No subjects are currently NymLocked in this server.")
-
-        mentions = [f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in user_ids]
-        embed = EmbedBuilder.base(
-            title="📜 NymLocked Subjects",
-            description="\n".join(mentions),
-            color=EmbedBuilder.COLOR_NEKOTINA,
-            author=ctx.author,
-            footer=f"Total Locked: {len(mentions)}"
-        )
-        await ctx.send(embed=embed)
-
 
     # --- Event Listener for Speech Interception ---
 
@@ -324,11 +455,9 @@ class NymLockCog(commands.Cog):
         if not message.guild or message.author.bot or not isinstance(message.channel, discord.TextChannel):
             return
 
-        # Check if member is locked
         if not await self._is_user_locked(message.guild.id, message.author.id):
             return
 
-        # 1. Delete original message
         try:
             await message.delete()
         except discord.Forbidden:
@@ -336,10 +465,8 @@ class NymLockCog(commands.Cog):
         except Exception:
             pass
 
-        # 2. Transform text
         converted_text = nym_uwuify(message.content) if message.content else random.choice(KAOMOJI_SUFFIXES).strip()
 
-        # 3. Collect attachments
         files = []
         for att in message.attachments:
             try:
@@ -347,7 +474,6 @@ class NymLockCog(commands.Cog):
             except Exception:
                 pass
 
-        # 4. Fetch or create Webhook for re-broadcasting
         try:
             webhooks = await message.channel.webhooks()
             webhook = discord.utils.get(webhooks, name="Nym-SpeechLock")
