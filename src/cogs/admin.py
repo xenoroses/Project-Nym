@@ -117,11 +117,11 @@ class AdminCog(commands.Cog):
             await self.bot.sync_commands()
             cmd_count = len(self.bot.pending_application_commands)
             embed = EmbedBuilder.base(
-                title="✧ Gates Synced",
-                description=f"✧ Synced `{cmd_count}` gates globally.",
-                color=EmbedBuilder.COLOR_NEKOTINA,
-                author=ctx.author
+                title="Gates Synced",
+                description=f"Synced `{cmd_count}` gates globally.",
+                color=EmbedBuilder.COLOR_NEKOTINA
             )
+
             await ctx.send(embed=embed)
         except Exception as e:
             embed = EmbedBuilder.error("Sync Error", f"Failed syncing gates: `{e}`")

@@ -13,7 +13,6 @@ from src.utils.embeds import EmbedBuilder
 
 logger = logging.getLogger("Nym")
 
-
 KAOMOJI_SUFFIXES = [
     " uwu", " owo", " >w<", " (⁠^⁠.⁠_⁠.⁠^⁠)⁠~", " nyaa~~",
     " *nuzzles u*", " (⁠っ⁠˘⁠w⁠˘⁠ς⁠)", " ✧*°:･", " (⁠:⁠3⁠っ⁠)⁠∋",
@@ -151,7 +150,6 @@ class NymLockCog(commands.Cog):
         row = await self.bot.db.fetch_one("SELECT 1 FROM bot_admins WHERE user_id = ?", (user.id,))
         return bool(row)
 
-
     async def _grant_access(self, guild_id: int, user_id: int, granted_by: int):
         """Grant NymLock access to a user."""
         key = f"nymlock:access:{guild_id}:{user_id}"
@@ -278,7 +276,7 @@ class NymLockCog(commands.Cog):
 
     nymlock = discord.SlashCommandGroup("nymlock", "NymLock speech enforcement and access management controls.")
 
-    @nymlock.command(name="lock", description="[Authorized Only] Lock a member into forced UwU speech mode.")
+    @nymlock.command(name="lock", description="Lock a member into forced UwU speech mode.")
     async def nymlock_lock_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Slash command for speech lock."""
         if not await self._has_nymlock_permission(ctx.author, ctx.guild):
@@ -292,16 +290,15 @@ class NymLockCog(commands.Cog):
         await self._set_user_lock(ctx.guild.id, member.id, ctx.author.id)
 
         embed = EmbedBuilder.base(
-            title="✦ NymLock Enforced",
-            description=f"✧ **Subject**: {member.mention} has been **NymLocked**!\n"
-                        f"• **Enforcer**: {ctx.author.mention}\n"
-                        f"• **Effect**: All speech in this server will be converted to UwU speak.",
-            color=EmbedBuilder.COLOR_ERROR,
-            author=ctx.author
+            title="NymLock Enforced",
+            description=f"**Subject**: {member.mention}\n"
+                        f"**Enforcer**: {ctx.author.mention}\n"
+                        f"All speech in this server is now converted to UwU speak.",
+            color=EmbedBuilder.COLOR_NEKOTINA
         )
         await ctx.respond(embed=embed)
 
-    @nymlock.command(name="unlock", description="[Authorized Only] Unlock a member from NymLock speech mode.")
+    @nymlock.command(name="unlock", description="Unlock a member from NymLock speech mode.")
     async def nymlock_unlock_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Slash command for speech unlock."""
         if not await self._has_nymlock_permission(ctx.author, ctx.guild):
@@ -311,15 +308,15 @@ class NymLockCog(commands.Cog):
         await self._delete_user_lock(ctx.guild.id, member.id)
 
         embed = EmbedBuilder.base(
-            title="✧ NymLock Released",
-            description=f"✧ **Subject**: {member.mention} speech lock has been **lifted**.\n"
-                        f"• **Enforcer**: {ctx.author.mention}",
-            color=EmbedBuilder.COLOR_SUCCESS,
-            author=ctx.author
+            title="NymLock Released",
+            description=f"**Subject**: {member.mention}\n"
+                        f"**Enforcer**: {ctx.author.mention}\n"
+                        f"Speech lock has been lifted.",
+            color=EmbedBuilder.COLOR_SUCCESS
         )
         await ctx.respond(embed=embed)
 
-    @nymlock.command(name="grant", description="[Admin Only] Grant NymLock execution access to a trusted member.")
+    @nymlock.command(name="grant", description="Grant NymLock execution access to a trusted member.")
     async def nymlock_grant_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Slash command to grant NymLock access."""
         if not await self._can_grant_access(ctx.author):
@@ -330,13 +327,12 @@ class NymLockCog(commands.Cog):
 
         embed = EmbedBuilder.success(
             title="NymLock Access Granted",
-            description=f"✨ {member.mention} has been granted **NymLock Access**!\n"
-                        f"• They can now use `/nymlock lock` and `/nymlock unlock` in this server.",
-            author=ctx.author
+            description=f"{member.mention} has been granted NymLock access.\n"
+                        f"They can now use `/nymlock lock` and `/nymlock unlock` in this server.",
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
-    @nymlock.command(name="revoke", description="[Admin Only] Revoke NymLock execution access from a member.")
+    @nymlock.command(name="revoke", description="Revoke NymLock execution access from a member.")
     async def nymlock_revoke_slash(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Slash command to revoke NymLock access."""
         if not await self._can_grant_access(ctx.author):
@@ -347,8 +343,7 @@ class NymLockCog(commands.Cog):
 
         embed = EmbedBuilder.success(
             title="NymLock Access Revoked",
-            description=f"⌬ NymLock Access for {member.mention} has been **revoked**.",
-            author=ctx.author
+            description=f"NymLock access for {member.mention} has been revoked.",
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
@@ -362,15 +357,14 @@ class NymLockCog(commands.Cog):
         locked_ids = await self._get_locked_users(ctx.guild.id)
         granted_ids = await self._get_granted_users(ctx.guild.id)
 
-        locked_str = "\n".join([f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in locked_ids]) if locked_ids else "`None`"
-        granted_str = "\n".join([f"• {ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in granted_ids]) if granted_ids else "`None`"
+        locked_str = "\n".join([f"{ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in locked_ids]) if locked_ids else "`None`"
+        granted_str = "\n".join([f"{ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f'`ID: {uid}`'}" for uid in granted_ids]) if granted_ids else "`None`"
 
         embed = EmbedBuilder.base(
-            title="📜 NymLock Telemetry & Roster",
-            description=f"**🔒 Currently Locked Members ({len(locked_ids)}):**\n{locked_str}\n\n"
-                        f"**✨ Staff Granted NymLock Access ({len(granted_ids)}):**\n{granted_str}",
+            title="NymLock Telemetry",
+            description=f"**Locked Members ({len(locked_ids)}):**\n{locked_str}\n\n"
+                        f"**Granted Staff ({len(granted_ids)}):**\n{granted_str}",
             color=EmbedBuilder.COLOR_NEKOTINA,
-            author=ctx.author,
         )
         await ctx.respond(embed=embed)
 
@@ -380,64 +374,67 @@ class NymLockCog(commands.Cog):
     async def nymlock_prefix(self, ctx: commands.Context, sub_or_member: Optional[str] = None, target: Optional[discord.Member] = None):
         """Prefix command fallback (!nymlock <@user> / !nymlock grant <@user> / !nymlock revoke <@user> / !nymlock list)."""
         if not sub_or_member:
-            return await ctx.send("⚠️ Usage: `!nymlock @User`, `!nymlock grant @User`, `!nymlock revoke @User`, or `!nymlock list`.")
+            return await ctx.send("Usage: `!nymlock @User`, `!nymlock grant @User`, `!nymlock revoke @User`, or `!nymlock list`.")
 
         sub_clean = sub_or_member.lower().strip()
 
-        # Subcommand: grant
         if sub_clean == "grant":
             if not await self._can_grant_access(ctx.author):
-                return await ctx.send("❌ **Access Denied**: Only Administrators can grant NymLock access.")
+                embed = EmbedBuilder.error("Access Denied", "Only Administrators can grant NymLock access.")
+                return await ctx.send(embed=embed)
             if not target and len(ctx.message.mentions) > 0:
                 target = ctx.message.mentions[0]
             if not target:
-                return await ctx.send("⚠️ Please mention a user to grant access: `!nymlock grant @User`.")
+                return await ctx.send("Please mention a user to grant access: `!nymlock grant @User`.")
             await self._grant_access(ctx.guild.id, target.id, ctx.author.id)
-            return await ctx.send(f"✨ {target.mention} has been granted **NymLock Access**.")
+            embed = EmbedBuilder.success("NymLock Access Granted", f"{target.mention} has been granted NymLock access.")
+            return await ctx.send(embed=embed)
 
-        # Subcommand: revoke
         if sub_clean == "revoke":
             if not await self._can_grant_access(ctx.author):
-                return await ctx.send("❌ **Access Denied**: Only Administrators can revoke NymLock access.")
+                embed = EmbedBuilder.error("Access Denied", "Only Administrators can revoke NymLock access.")
+                return await ctx.send(embed=embed)
             if not target and len(ctx.message.mentions) > 0:
                 target = ctx.message.mentions[0]
             if not target:
-                return await ctx.send("⚠️ Please mention a user to revoke access: `!nymlock revoke @User`.")
+                return await ctx.send("Please mention a user to revoke access: `!nymlock revoke @User`.")
             await self._revoke_access(ctx.guild.id, target.id)
-            return await ctx.send(f"⌬ NymLock Access for {target.mention} has been **revoked**.")
+            embed = EmbedBuilder.success("NymLock Access Revoked", f"NymLock access for {target.mention} has been revoked.")
+            return await ctx.send(embed=embed)
 
-        # Subcommand: list
         if sub_clean in ["list", "roster", "telemetry"]:
             if not await self._has_nymlock_permission(ctx.author, ctx.guild):
-                return await ctx.send("❌ **Access Denied**: You do not have permission to view NymLock roster.")
+                embed = EmbedBuilder.error("Access Denied", "You do not have permission to view NymLock roster.")
+                return await ctx.send(embed=embed)
             locked_ids = await self._get_locked_users(ctx.guild.id)
             granted_ids = await self._get_granted_users(ctx.guild.id)
             locked_str = ", ".join([ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f"`ID: {uid}`" for uid in locked_ids]) if locked_ids else "None"
             granted_str = ", ".join([ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f"`ID: {uid}`" for uid in granted_ids]) if granted_ids else "None"
-            return await ctx.send(f"📜 **NymLock Roster**:\n• **Locked**: {locked_str}\n• **Granted Staff**: {granted_str}")
+            embed = EmbedBuilder.base("NymLock Telemetry", f"**Locked**: {locked_str}\n**Granted Staff**: {granted_str}")
+            return await ctx.send(embed=embed)
 
-        # Default action: speech lock member
         member = target or (ctx.message.mentions[0] if ctx.message.mentions else None)
         if not member and sub_or_member.isdigit():
             member = ctx.guild.get_member(int(sub_or_member))
 
         if not member:
-            return await ctx.send("⚠️ Please specify a target user: `!nymlock @User`.")
+            return await ctx.send("Please specify a target user: `!nymlock @User`.")
 
         if not await self._has_nymlock_permission(ctx.author, ctx.guild):
-            return await ctx.send("❌ **Access Denied**: You do not have NymLock permission.")
+            embed = EmbedBuilder.error("Access Denied", "You do not have NymLock permission.")
+            return await ctx.send(embed=embed)
 
         if member.id == ctx.guild.owner_id:
-            return await ctx.send("⚠️ The Guild Owner cannot be NymLocked.")
+            embed = EmbedBuilder.error("Immunity Active", "The Guild Owner cannot be NymLocked.")
+            return await ctx.send(embed=embed)
 
         await self._set_user_lock(ctx.guild.id, member.id, ctx.author.id)
         embed = EmbedBuilder.base(
-            title="✦ NymLock Enforced",
-            description=f"✧ **Subject**: {member.mention} has been **NymLocked**!\n"
-                        f"• **Enforcer**: {ctx.author.mention}\n"
-                        f"• **Effect**: All speech in this server will be converted to UwU speak.",
-            color=EmbedBuilder.COLOR_ERROR,
-            author=ctx.author
+            title="NymLock Enforced",
+            description=f"**Subject**: {member.mention}\n"
+                        f"**Enforcer**: {ctx.author.mention}\n"
+                        f"All speech in this server is now converted to UwU speak.",
+            color=EmbedBuilder.COLOR_NEKOTINA
         )
         await ctx.send(embed=embed)
 
@@ -446,18 +443,19 @@ class NymLockCog(commands.Cog):
         """Prefix command fallback (!nymunlock <@user> / !hul <@user>)."""
         target = member or (ctx.message.mentions[0] if ctx.message.mentions else None)
         if not target:
-            return await ctx.send("⚠️ Please mention a user to unlock: `!nymunlock @User`.")
+            return await ctx.send("Please mention a user to unlock: `!nymunlock @User`.")
 
         if not await self._has_nymlock_permission(ctx.author, ctx.guild):
-            return await ctx.send("❌ **Access Denied**: You do not have NymLock permission.")
+            embed = EmbedBuilder.error("Access Denied", "You do not have NymLock permission.")
+            return await ctx.send(embed=embed)
 
         await self._delete_user_lock(ctx.guild.id, target.id)
         embed = EmbedBuilder.base(
-            title="✧ NymLock Released",
-            description=f"✧ **Subject**: {target.mention} speech lock has been **lifted**.\n"
-                        f"• **Enforcer**: {ctx.author.mention}",
-            color=EmbedBuilder.COLOR_SUCCESS,
-            author=ctx.author
+            title="NymLock Released",
+            description=f"**Subject**: {target.mention}\n"
+                        f"**Enforcer**: {ctx.author.mention}\n"
+                        f"Speech lock has been lifted.",
+            color=EmbedBuilder.COLOR_SUCCESS
         )
         await ctx.send(embed=embed)
 

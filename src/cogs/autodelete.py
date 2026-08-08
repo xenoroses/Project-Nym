@@ -246,10 +246,10 @@ class AutoDeleteCog(commands.Cog):
         dur_text = format_seconds_to_duration(seconds)
         embed = EmbedBuilder.success(
             "AutoDelete Configured",
-            f"✧ AutoDelete protocol engaged for {target_ch.mention}.\n\n"
+            f"AutoDelete configured for {target_ch.mention}.\n\n"
             f"**Interval:** `{dur_text}`\n"
             f"**Filter Mode:** `{filter_mode.upper()}`\n"
-            f"**Protections:** `Pinned Messages`, `Bot Posts`, and `Admins` are preserved."
+            f"**Protections:** Pinned messages, bot posts, and admins are preserved."
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
@@ -268,9 +268,10 @@ class AutoDeleteCog(commands.Cog):
 
         embed = EmbedBuilder.success(
             "AutoDelete Disabled",
-            f"⌬ AutoDelete protocol disengaged for {target_ch.mention}."
+            f"AutoDelete disabled for {target_ch.mention}."
         )
         await ctx.respond(embed=embed, ephemeral=True)
+
 
     @autodelete.command(name="status", description="Check active autodelete configuration for a channel.")
     async def autodelete_status(

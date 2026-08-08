@@ -160,7 +160,7 @@ class StickyCog(commands.Cog):
         format_type = "Rich Embed" if as_embed else "Plain Text"
         embed = EmbedBuilder.success(
             title="Sticky Message Set",
-            description=f"✧ Sticky message protocol engaged for {target_ch.mention}.\n\n"
+            description=f"Sticky message configured for {target_ch.mention}.\n\n"
                         f"**Format:** `{format_type}`\n"
                         f"**Notice:**\n>>> {message}"
         )
@@ -199,9 +199,10 @@ class StickyCog(commands.Cog):
 
         embed = EmbedBuilder.success(
             title="Sticky Message Removed",
-            description=f"⌬ Sticky message protocol disengaged for {target_ch.mention}."
+            description=f"Sticky message removed from {target_ch.mention}."
         )
         await ctx.respond(embed=embed, ephemeral=True)
+
 
     @sticky.command(name="list", description="List all active sticky messages in this server.")
     async def sticky_list_slash(self, ctx: discord.ApplicationContext):
