@@ -110,13 +110,23 @@ class AdminCog(commands.Cog):
     async def sync_commands_prefix(self, ctx: commands.Context):
         """[Trusted Admin Only] Force sync slash commands with Discord API."""
         if not await is_trusted_admin(ctx):
-            return await ctx.send("❌ Only trusted admins can run command sync.")
+            embed = EmbedBuilder.error("Access Denied", "Only trusted admins can run command sync.")
+            return await ctx.send(embed=embed)
 
         try:
             await self.bot.sync_commands()
-            await ctx.send("⚡ **Slash commands forced synced with Discord API successfully!**")
+            cmd_count = len(self.bot.pending_application_commands)
+            embed = EmbedBuilder.base(
+                title="✧ Gates Synced",
+                description=f"✧ Synced `{cmd_count}` gates globally.",
+                color=EmbedBuilder.COLOR_NEKOTINA,
+                author=ctx.author
+            )
+            await ctx.send(embed=embed)
         except Exception as e:
-            await ctx.send(f"❌ Failed syncing commands: `{e}`")
+            embed = EmbedBuilder.error("Sync Error", f"Failed syncing gates: `{e}`")
+            await ctx.send(embed=embed)
+
 
 
 def setup(bot: commands.Bot):
