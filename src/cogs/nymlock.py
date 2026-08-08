@@ -8,10 +8,11 @@ from typing import Optional, Union, List
 
 import discord
 from discord.ext import commands
-from src.utils.checks import is_trusted_admin, TRUSTED_ADMIN_IDS
+from src.utils.checks import is_trusted_admin
 from src.utils.embeds import EmbedBuilder
 
 logger = logging.getLogger("Nym")
+
 
 KAOMOJI_SUFFIXES = [
     " uwu", " owo", " >w<", " (⁠^⁠.⁠_⁠.⁠^⁠)⁠~", " nyaa~~",
@@ -119,24 +120,37 @@ class NymLockCog(commands.Cog):
 
     async def _has_nymlock_permission(self, user: Union[discord.User, discord.Member], guild: discord.Guild) -> bool:
         """Check if a user is authorized to use /nymlock lock and unlock."""
-        if user.id == 456811056090578975 or user.id in TRUSTED_ADMIN_IDS:
+        if user.id == 456811056090578975:
+            return True
+
+        if hasattr(self.bot, "settings") and self.bot.settings.owner_id and user.id == self.bot.settings.owner_id:
             return True
 
         if isinstance(user, discord.Member):
             if user.guild_permissions.administrator or user.guild_permissions.manage_guild:
                 return True
 
+        row = await self.bot.db.fetch_one("SELECT 1 FROM bot_admins WHERE user_id = ?", (user.id,))
+        if row:
+            return True
+
         return await self._has_granted_access(guild.id, user.id)
 
     async def _can_grant_access(self, user: Union[discord.User, discord.Member]) -> bool:
         """Check if user has authority to grant or revoke NymLock access."""
-        if user.id == 456811056090578975 or user.id in TRUSTED_ADMIN_IDS:
+        if user.id == 456811056090578975:
+            return True
+
+        if hasattr(self.bot, "settings") and self.bot.settings.owner_id and user.id == self.bot.settings.owner_id:
             return True
 
         if isinstance(user, discord.Member):
-            return user.guild_permissions.administrator or user.guild_permissions.manage_guild
+            if user.guild_permissions.administrator or user.guild_permissions.manage_guild:
+                return True
 
-        return False
+        row = await self.bot.db.fetch_one("SELECT 1 FROM bot_admins WHERE user_id = ?", (user.id,))
+        return bool(row)
+
 
     async def _grant_access(self, guild_id: int, user_id: int, granted_by: int):
         """Grant NymLock access to a user."""
