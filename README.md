@@ -1,3 +1,13 @@
+---
+title: Nym Bot
+emoji: 🌙
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+app_file: app.py
+pinned: false
+---
+
 # Nym - Py-Cord Discord Bot
 
 A modern, production-ready Discord bot for **Project Nym**, built with **Python 3.11+**, **Py-Cord**, and an asynchronous modular cogs architecture.
