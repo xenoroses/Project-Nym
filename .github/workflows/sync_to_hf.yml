@@ -8,7 +8,7 @@ jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           lfs: true
@@ -16,4 +16,4 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git push --force https://xenoroses:$HF_TOKEN@huggingface.co/spaces/xenoroses/Nym-Bot main
+          git push --force https://xenoroses:$HF_TOKEN@huggingface.co/spaces/xenoroses/Nym-Bot main || git push --force https://xenoroses:$HF_TOKEN@huggingface.co/spaces/xenoroses/nym-bot main || git push --force https://xenoroses:$HF_TOKEN@huggingface.co/spaces/xenoroses/Project-Nym main
