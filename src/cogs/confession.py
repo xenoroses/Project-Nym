@@ -362,7 +362,7 @@ class ConfessionCog(commands.Cog):
 
         target_ch = channel or ctx.channel
         embed = EmbedBuilder.base(
-            title="🌸 Anonymous Confession Portal",
+            title="💖 Anonymous Confession Portal",
             description="Click the button below to submit an anonymous confession.\n"
                         "Your identity will remain completely hidden from server members.",
             color=EmbedBuilder.COLOR_NEKOTINA,

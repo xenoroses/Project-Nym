@@ -13,10 +13,14 @@ try:
 except Exception as e:
     print(f"ZeroGPU notice: {e}")
 
+import asyncio
+
 # Start Nym Bot in a background thread after Gradio initializes
 def run_nym_bot():
     time.sleep(3)  # Short delay to allow Gradio to bind port 7860 first
     try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         import main
         main.main()
     except Exception as e:
