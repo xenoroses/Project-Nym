@@ -57,7 +57,6 @@ class ConfessionPanelView(discord.ui.View):
     @discord.ui.button(
         label="Submit Confession",
         style=discord.ButtonStyle.primary,
-        emoji="✉️",
         custom_id="nym_confession_submit_btn",
     )
     async def submit_button(
@@ -95,6 +94,43 @@ class ConfessionCog(commands.Cog):
                 return int(s)
         return None
 
+    async def refresh_confession_panel(self, channel: discord.TextChannel):
+        """Delete the old confession panel and repost it underneath the newest confession."""
+
+        try:
+            async for message in channel.history(limit=100):
+                if message.author.id != self.bot.user.id:
+                    continue
+
+                if not message.embeds:
+                    continue
+
+                embed = message.embeds[0]
+
+                if embed.title in (
+                    "💖 Anonymous Confession Portal",
+                    "🌸 Anonymous Confession Portal",
+                ):
+                    await message.delete()
+                    break
+
+        except Exception as e:
+            logger.warning(f"Failed deleting old confession panel: {e}")
+
+        panel_embed = EmbedBuilder.base(
+            title="💖 Anonymous Confession Portal",
+            description="Click the button below to submit an anonymous confession.\n"
+                        "Your identity will remain completely hidden from server members.",
+            color=EmbedBuilder.COLOR_NEKOTINA,
+        )
+
+        view = ConfessionPanelView(self.bot, self)
+
+        try:
+            await channel.send(embed=panel_embed, view=view)
+        except Exception as e:
+            logger.warning(f"Failed reposting confession panel: {e}")
+    
     # --- Storage Helpers ---
 
     async def _get_guild_config(self, guild_id: int) -> Optional[dict]:
@@ -230,7 +266,6 @@ class ConfessionCog(commands.Cog):
             title=f"Anonymous Confession #{new_count}",
             description=content,
             color=EmbedBuilder.COLOR_NEKOTINA,
-            footer="Type /confess or click button to submit",
             include_timestamp=False,
         )
 
@@ -238,6 +273,7 @@ class ConfessionCog(commands.Cog):
 
         try:
             await confession_ch.send(embed=public_embed)
+            await self.refresh_confession_panel(confession_ch)
         except Exception as e:
             logger.error(f"Failed sending public confession in channel {confession_ch.id}: {e}")
             if interaction:
@@ -252,18 +288,18 @@ class ConfessionCog(commands.Cog):
             log_ch = guild.get_channel(log_ch_id)
             if log_ch:
                 admin_embed = EmbedBuilder.base(
-                    title=f"🕵️ Confession Audit Log #{new_count}",
+                    title=f"Confession Log #{new_count}",
                     description=f"**Confession ID:** `{confession_id}`\n\n**Content:**\n>>> {content}",
                     color=EmbedBuilder.COLOR_WARNING,
                     footer=f"Logged at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
                 )
                 admin_embed.add_field(
-                    name="👤 Author Identity",
+                    name="Author Identity",
                     value=f"{user.mention} (`{user.name}` | `ID: {user.id}`)",
                     inline=True,
                 )
                 admin_embed.add_field(
-                    name="📍 Channel",
+                    name="Channel",
                     value=confession_ch.mention,
                     inline=True,
                 )
@@ -363,8 +399,8 @@ class ConfessionCog(commands.Cog):
         target_ch = channel or ctx.channel
         embed = EmbedBuilder.base(
             title="💖 Anonymous Confession Portal",
-            description="Click the button below to submit an anonymous confession.\n"
-                        "Your identity will remain completely hidden from server members.",
+            description="Click the button below to submit an **anonymous confession**.\n"
+                        "Your identity will remain completely hidden from regular server members.",
             color=EmbedBuilder.COLOR_NEKOTINA,
         )
         view = ConfessionPanelView(self.bot, self)
