@@ -7,7 +7,32 @@ from datetime import datetime, timezone
 
 NYM_BANNER_PATH = "assets/banner.jpg"
 NYM_BANNER_CDN = "https://cdn.discordapp.com/attachments/1000000000000000000/banner_lovesknot.jpg"
+
+DATA_DIR = "data"
+STORE_FILE = os.path.join(DATA_DIR, "nym_store.json")
 _NYM_MEMORY_STORE = {}
+
+def _load_nym_store():
+    global _NYM_MEMORY_STORE
+    try:
+        if not os.path.exists(DATA_DIR):
+            os.makedirs(DATA_DIR, exist_ok=True)
+        if os.path.exists(STORE_FILE):
+            with open(STORE_FILE, "r", encoding="utf-8") as f:
+                _NYM_MEMORY_STORE = json.load(f)
+    except Exception as e:
+        _NYM_MEMORY_STORE = {}
+
+def _save_nym_store():
+    try:
+        if not os.path.exists(DATA_DIR):
+            os.makedirs(DATA_DIR, exist_ok=True)
+        with open(STORE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_NYM_MEMORY_STORE, f, indent=2)
+    except Exception:
+        pass
+
+_load_nym_store()
 
 class NymMysteryMailModal(discord.ui.Modal):
     def __init__(self, target_user: discord.User):
@@ -65,6 +90,7 @@ class NymMysteryMailModal(discord.ui.Modal):
             "message": message_text,
             "revealed": False
         }
+        _save_nym_store()
 
         # --- Audit Logging (Anti-Abuse Oversight) ---
         if interaction.guild:
@@ -258,12 +284,14 @@ class NymMysteryMailPanelView(discord.ui.View):
 
         if current:
             _NYM_MEMORY_STORE.pop(key, None)
+            _save_nym_store()
             await interaction.response.send_message(
                 "✅ **You have disabled Do Not Disturb for Mystery Mail.** You can now receive anonymous messages.",
                 ephemeral=True
             )
         else:
             _NYM_MEMORY_STORE[key] = True
+            _save_nym_store()
             await interaction.response.send_message(
                 "⛔ **You have enabled Do Not Disturb for Mystery Mail.** You will no longer receive anonymous messages.",
                 ephemeral=True
@@ -310,6 +338,7 @@ class MysteryMailCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def mysterymaillog_cmd(self, ctx: discord.ApplicationContext, channel: discord.TextChannel):
         _NYM_MEMORY_STORE[f"mysterymail_log_channel:{ctx.guild.id}"] = str(channel.id)
+        _save_nym_store()
         await ctx.respond(
             f"✅ **Mystery Mail audit log channel updated to {channel.mention}.** All sent anonymous messages will be logged here for admin oversight.",
             ephemeral=True
@@ -319,6 +348,7 @@ class MysteryMailCog(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def mysterymaillogclear_cmd(self, ctx: discord.ApplicationContext):
         _NYM_MEMORY_STORE.pop(f"mysterymail_log_channel:{ctx.guild.id}", None)
+        _save_nym_store()
         await ctx.respond(
             "🗑️ **Mystery Mail audit logging disabled for this server.**",
             ephemeral=True
