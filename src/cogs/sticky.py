@@ -11,6 +11,61 @@ from src.utils.embeds import EmbedBuilder
 logger = logging.getLogger("Nym")
 
 
+class NymStickyModal(discord.ui.Modal):
+    """Interactive Modal for entering multiline sticky messages with markdown headers."""
+
+    def __init__(self, bot: commands.Bot, cog: "StickyCog", target_channel: discord.TextChannel):
+        super().__init__(title="Set Sticky Notice")
+        self.bot = bot
+        self.cog = cog
+        self.target_channel = target_channel
+
+        self.add_item(
+            discord.ui.InputText(
+                label="Sticky Message (Supports # Headers & Markdown)",
+                style=discord.InputTextStyle.paragraph,
+                placeholder="Type your multiline sticky message here...\nUse # Title, ## Header, **bold**, or > quotes.",
+                required=True,
+                max_length=2000,
+            )
+        )
+
+        self.add_item(
+            discord.ui.InputText(
+                label="Format as Rich Embed? (yes / no)",
+                style=discord.InputTextStyle.short,
+                placeholder="Type 'yes' to send inside a sleek embed, or 'no' for plain text.",
+                required=False,
+                default="no",
+                max_length=5,
+            )
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        message_text = self.children[0].value.strip()
+        as_embed_str = self.children[1].value.strip().lower()
+        as_embed = as_embed_str in ("yes", "y", "true", "1")
+
+        async with self.cog.channel_locks[self.target_channel.id]:
+            await self.cog._set_sticky_data(
+                channel_id=self.target_channel.id,
+                guild_id=interaction.guild.id,
+                message_text=message_text,
+                is_embed=as_embed,
+                last_id=None,
+            )
+
+        format_type = "Rich Embed" if as_embed else "Plain Text / Markdown"
+        embed = EmbedBuilder.success(
+            title="Sticky Message Configured",
+            description=f"Sticky notice successfully set for {self.target_channel.mention}!\n\n"
+                        f"• **Format:** `{format_type}`\n"
+                        f"• **Content Preview:**\n>>> {message_text[:200]}" + ("..." if len(message_text) > 200 else ""),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 class StickyCog(commands.Cog):
     """Premium Sticky Message Engine.
 
@@ -134,6 +189,20 @@ class StickyCog(commands.Cog):
     # --- Consolidated Subcommand Group ---
 
     sticky = discord.SlashCommandGroup("sticky", "Sticky message engine controls.")
+
+    @sticky.command(name="modal", description="Open multiline paragraph modal popup to set sticky notice with newlines & headers.")
+    async def sticky_modal_slash(
+        self,
+        ctx: discord.ApplicationContext,
+        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None),
+    ):
+        """Slash command opening multiline modal popup."""
+        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
+        target_ch = channel or ctx.channel
+        modal = NymStickyModal(self.bot, self, target_ch)
+        await ctx.send_modal(modal)
 
     @sticky.command(name="set", description="Set a sticky notice message for a channel.")
     async def sticky_set_slash(
