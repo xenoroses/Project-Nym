@@ -38,6 +38,8 @@ class Settings:
         guild_id_raw = os.getenv("GUILD_ID", "").strip()
 
         owner_id = int(owner_id_raw) if owner_id_raw.isdigit() else None
+        guild_id = int(guild_id_raw) if guild_id_raw.isdigit() else None
+
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         data_dir = os.path.join(base_dir, "data")
         os.makedirs(data_dir, exist_ok=True)
