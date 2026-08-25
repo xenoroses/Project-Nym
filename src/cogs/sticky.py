@@ -22,7 +22,7 @@ class NymStickyModal(discord.ui.Modal):
 
         self.add_item(
             discord.ui.InputText(
-                label="Sticky Message (Supports # Headers & Markdown)",
+                label="Sticky Message Content",
                 style=discord.InputTextStyle.paragraph,
                 placeholder="Type your multiline sticky message here...\nUse # Title, ## Header, **bold**, or > quotes.",
                 required=True,
@@ -32,7 +32,7 @@ class NymStickyModal(discord.ui.Modal):
 
         self.add_item(
             discord.ui.InputText(
-                label="Format as Rich Embed? (yes / no)",
+                label="Format as Rich Embed? (yes/no)",
                 style=discord.InputTextStyle.short,
                 placeholder="Type 'yes' to send inside a sleek embed, or 'no' for plain text.",
                 required=False,
@@ -47,19 +47,26 @@ class NymStickyModal(discord.ui.Modal):
         as_embed_str = self.children[1].value.strip().lower()
         as_embed = as_embed_str in ("yes", "y", "true", "1")
 
+        sent_msg_id = None
+        try:
+            new_msg = await self.cog._send_sticky(self.target_channel, message_text, as_embed)
+            sent_msg_id = new_msg.id
+        except Exception:
+            pass
+
         async with self.cog.channel_locks[self.target_channel.id]:
             await self.cog._set_sticky_data(
                 channel_id=self.target_channel.id,
                 guild_id=interaction.guild.id,
                 message_text=message_text,
                 is_embed=as_embed,
-                last_id=None,
+                last_id=sent_msg_id,
             )
 
         format_type = "Rich Embed" if as_embed else "Plain Text / Markdown"
         embed = EmbedBuilder.success(
             title="Sticky Message Configured",
-            description=f"Sticky notice successfully set for {self.target_channel.mention}!\n\n"
+            description=f"Sticky notice posted and active for {self.target_channel.mention}!\n\n"
                         f"• **Format:** `{format_type}`\n"
                         f"• **Content Preview:**\n>>> {message_text[:200]}" + ("..." if len(message_text) > 200 else ""),
         )
@@ -163,18 +170,47 @@ class StickyCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Upstash Redis set failed for sticky:{channel_id}: {e}")
 
-    async def _delete_sticky_data(self, channel_id: int) -> None:
-        """Remove sticky message from both SQLite DB and Upstash Redis."""
-        key = f"sticky:{channel_id}"
+    async def _delete_sticky_data(self, channel: discord.TextChannel) -> bool:
+        """Remove sticky message from both SQLite DB and Upstash Redis, with channel history sweep."""
+        key = f"sticky:{channel.id}"
+        data = await self._get_sticky_data(channel.id)
+        deleted = False
 
-        await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel_id,))
+        if data:
+            deleted = True
+            last_id = data.get("last_id")
+            if last_id:
+                try:
+                    old_msg = await channel.fetch_message(int(last_id))
+                    await old_msg.delete()
+                except Exception:
+                    pass
+
+        await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel.id,))
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.delete(key)
                 await self.bot.upstash.set(key, json.dumps({"disabled": True}), ex_seconds=86400)
             except Exception as e:
-                logger.warning(f"Upstash Redis delete failed for sticky:{channel_id}: {e}")
+                logger.warning(f"Upstash Redis delete failed for sticky:{channel.id}: {e}")
+
+        # Fallback sweep for orphaned bot messages
+        try:
+            async for msg in channel.history(limit=15):
+                if msg.author.id == self.bot.user.id:
+                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active"]):
+                        continue
+                    try:
+                        await msg.delete()
+                        deleted = True
+                        break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        return deleted
 
     async def _send_sticky(self, channel: discord.TextChannel, message_text: str, is_embed: bool) -> discord.Message:
         """Helper to post the sticky message as a clean embed or plain text."""
@@ -218,12 +254,19 @@ class StickyCog(commands.Cog):
 
         target_ch = channel or ctx.channel
         async with self.channel_locks[target_ch.id]:
+            sent_msg_id = None
+            try:
+                new_msg = await self._send_sticky(target_ch, message, as_embed)
+                sent_msg_id = new_msg.id
+            except Exception:
+                pass
+
             await self._set_sticky_data(
                 channel_id=target_ch.id,
                 guild_id=ctx.guild.id,
                 message_text=message,
                 is_embed=as_embed,
-                last_id=None
+                last_id=sent_msg_id
             )
 
         format_type = "Rich Embed" if as_embed else "Plain Text"
@@ -247,29 +290,18 @@ class StickyCog(commands.Cog):
 
         target_ch = channel or ctx.channel
         async with self.channel_locks[target_ch.id]:
-            data = await self._get_sticky_data(target_ch.id)
+            deleted = await self._delete_sticky_data(target_ch)
 
-            if not data:
-                embed = EmbedBuilder.warning(
-                    title="No Sticky Message",
-                    description=f"There is no active sticky message configured in {target_ch.mention}."
-                )
-                return await ctx.respond(embed=embed, ephemeral=True)
-
-            last_id = data.get("last_id")
-            await self._delete_sticky_data(target_ch.id)
-
-            if last_id:
-                try:
-                    old_msg = await target_ch.fetch_message(last_id)
-                    await old_msg.delete()
-                except Exception:
-                    pass
-
-        embed = EmbedBuilder.success(
-            title="Sticky Message Removed",
-            description=f"Sticky message removed from {target_ch.mention}."
-        )
+        if deleted:
+            embed = EmbedBuilder.success(
+                title="Sticky Message Removed",
+                description=f"Sticky message removed from {target_ch.mention}."
+            )
+        else:
+            embed = EmbedBuilder.warning(
+                title="No Sticky Message",
+                description=f"There was no active sticky message configured in {target_ch.mention}."
+            )
         await ctx.respond(embed=embed, ephemeral=True)
 
 
@@ -326,12 +358,19 @@ class StickyCog(commands.Cog):
             message_clean = message_clean[6:].strip()
 
         async with self.channel_locks[ctx.channel.id]:
+            sent_msg_id = None
+            try:
+                new_msg = await self._send_sticky(ctx.channel, message_clean, is_embed)
+                sent_msg_id = new_msg.id
+            except Exception:
+                pass
+
             await self._set_sticky_data(
                 channel_id=ctx.channel.id,
                 guild_id=ctx.guild.id,
                 message_text=message_clean,
                 is_embed=is_embed,
-                last_id=None
+                last_id=sent_msg_id
             )
 
         format_str = " (Rich Embed)" if is_embed else ""
@@ -344,21 +383,12 @@ class StickyCog(commands.Cog):
             return await ctx.send("❌ You need **Manage Channels** or **Administrator** permission.")
 
         async with self.channel_locks[ctx.channel.id]:
-            data = await self._get_sticky_data(ctx.channel.id)
-            if not data:
-                return await ctx.send("⚠️ No active sticky message found in this channel.")
+            deleted = await self._delete_sticky_data(ctx.channel)
 
-            last_id = data.get("last_id")
-            await self._delete_sticky_data(ctx.channel.id)
-
-            if last_id:
-                try:
-                    old_msg = await ctx.channel.fetch_message(last_id)
-                    await old_msg.delete()
-                except Exception:
-                    pass
-
-        await ctx.send("⌬ Sticky message removed from this channel.")
+        if deleted:
+            await ctx.send("⌬ Sticky message removed from this channel.")
+        else:
+            await ctx.send("⚠️ No active sticky message found in this channel.")
 
     # --- Event Listener ---
 

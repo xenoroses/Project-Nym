@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 NYM_BANNER_PATH = "assets/banner.jpg"
 NYM_BANNER_CDN = "https://cdn.discordapp.com/attachments/1000000000000000000/banner_lovesknot.jpg"
 
-DATA_DIR = "data"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 STORE_FILE = os.path.join(DATA_DIR, "nym_store.json")
 _NYM_MEMORY_STORE = {}
 

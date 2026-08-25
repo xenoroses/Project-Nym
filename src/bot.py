@@ -11,7 +11,7 @@ from src.utils.health_server import HealthServer
 
 logger = logging.getLogger("Nym")
 
-DEFAULT_PREFIXES: List[str] = ["!", ","]
+DEFAULT_PREFIXES: List[str] = ["nym ", "nym", "!", ","]
 
 
 async def get_prefix(bot, message: discord.Message):

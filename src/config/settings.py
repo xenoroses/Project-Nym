@@ -38,8 +38,12 @@ class Settings:
         guild_id_raw = os.getenv("GUILD_ID", "").strip()
 
         owner_id = int(owner_id_raw) if owner_id_raw.isdigit() else None
-        guild_id = int(guild_id_raw) if guild_id_raw.isdigit() else None
-        db_path = os.getenv("DB_PATH", "nym.db").strip()
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        data_dir = os.path.join(base_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        default_db = os.path.join(data_dir, "nym.db")
+
+        db_path = os.getenv("DB_PATH", default_db).strip()
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
         openrouter_key = os.getenv("OPENROUTER_KEY", "").strip() or None
