@@ -49,8 +49,8 @@ class Settings:
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
         openrouter_key = os.getenv("OPENROUTER_KEY", "").strip() or None
-        upstash_redis_rest_url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip() or None
-        upstash_redis_rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip() or None
+        upstash_redis_rest_url = (os.getenv("UPSTASH_REDIS_REST_URL", "").strip().strip('"') or "https://great-camel-72413.upstash.io")
+        upstash_redis_rest_token = (os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip().strip('"') or "gQAAAAAAARrdAAIgcDJhNGMyOWYzMmY5MjQ0YmYxYjI2NWI1N2NhZWNiNmZjZQ")
 
         return cls(
             discord_token=token,
