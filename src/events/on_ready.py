@@ -13,12 +13,14 @@ class OnReadyEvent(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # Force sync slash commands with Discord API
-        try:
-            await self.bot.sync_commands()
-            logger.info("⚡ Application commands forced synced with Discord API.")
-        except Exception as e:
-            logger.warning(f"Failed syncing commands with Discord API: {e}")
+        # Force sync slash commands once on startup
+        if not getattr(self.bot, "_commands_synced", False):
+            try:
+                await self.bot.sync_commands()
+                self.bot._commands_synced = True
+                logger.info("⚡ Application commands forced synced with Discord API.")
+            except Exception as e:
+                logger.warning(f"Failed syncing commands with Discord API: {e}")
 
         guild_count = len(self.bot.guilds)
         total_members = sum(g.member_count or 0 for g in self.bot.guilds)
