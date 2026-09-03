@@ -20,13 +20,15 @@ async def get_prefix(bot, message: discord.Message):
         return commands.when_mentioned_or(*DEFAULT_PREFIXES)(bot, message)
 
     guild_id = message.guild.id
-    cache_key = f"prefixes:{guild_id}"
+    cache_key = f"nym:prefixes:{guild_id}"
     prefixes = None
 
     # 1. Try Upstash Redis Cache
     if hasattr(bot, "upstash") and bot.upstash.is_configured:
         try:
             cached_json = await bot.upstash.get(cache_key)
+            if not cached_json:
+                cached_json = await bot.upstash.get(f"prefixes:{guild_id}")
             if cached_json:
                 prefixes = json.loads(cached_json)
         except Exception:
@@ -50,6 +52,10 @@ async def get_prefix(bot, message: discord.Message):
 
     if not prefixes:
         prefixes = DEFAULT_PREFIXES.copy()
+
+    # Filter out 'hya' so Nym never responds to Hyacine commands
+    if isinstance(prefixes, list):
+        prefixes = [p for p in prefixes if p.strip().lower() != "hya"]
 
     # Expand prefixes (e.g. if 'nym' is set, also support 'nym ' with space if word)
     expanded = []
