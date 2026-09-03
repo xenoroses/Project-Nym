@@ -47,14 +47,27 @@ class NymStickyModal(discord.ui.Modal):
         as_embed_str = self.children[1].value.strip().lower()
         as_embed = as_embed_str in ("yes", "y", "true", "1")
 
-        sent_msg_id = None
-        try:
-            new_msg = await self.cog._send_sticky(self.target_channel, message_text, as_embed)
-            sent_msg_id = new_msg.id
-        except Exception:
-            pass
-
         async with self.cog.channel_locks[self.target_channel.id]:
+            # Sweep channel history for previous sticky messages
+            try:
+                async for past_msg in self.target_channel.history(limit=15):
+                    if past_msg.author.id == self.bot.user.id:
+                        if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
+                            continue
+                        try:
+                            await past_msg.delete()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            sent_msg_id = None
+            try:
+                new_msg = await self.cog._send_sticky(self.target_channel, message_text, as_embed)
+                sent_msg_id = new_msg.id
+            except Exception:
+                pass
+
             await self.cog._set_sticky_data(
                 channel_id=self.target_channel.id,
                 guild_id=interaction.guild.id,
@@ -254,6 +267,19 @@ class StickyCog(commands.Cog):
 
         target_ch = channel or ctx.channel
         async with self.channel_locks[target_ch.id]:
+            # Sweep channel history for previous sticky messages
+            try:
+                async for past_msg in target_ch.history(limit=15):
+                    if past_msg.author.id == self.bot.user.id:
+                        if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
+                            continue
+                        try:
+                            await past_msg.delete()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             sent_msg_id = None
             try:
                 new_msg = await self._send_sticky(target_ch, message, as_embed)
@@ -358,12 +384,32 @@ class StickyCog(commands.Cog):
             message_clean = message_clean[6:].strip()
 
         async with self.channel_locks[ctx.channel.id]:
+            # Delete author command message
+            try:
+                await ctx.message.delete()
+            except Exception:
+                pass
+
+            # Sweep channel history to remove any existing bot sticky messages
+            try:
+                async for past_msg in ctx.channel.history(limit=15):
+                    if past_msg.author.id == self.bot.user.id:
+                        if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
+                            continue
+                        try:
+                            await past_msg.delete()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Post single sticky message at the bottom
             sent_msg_id = None
             try:
                 new_msg = await self._send_sticky(ctx.channel, message_clean, is_embed)
                 sent_msg_id = new_msg.id
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to send sticky message in channel {ctx.channel.id}: {e}")
 
             await self._set_sticky_data(
                 channel_id=ctx.channel.id,
@@ -372,13 +418,6 @@ class StickyCog(commands.Cog):
                 is_embed=is_embed,
                 last_id=sent_msg_id
             )
-
-        format_str = " (Rich Embed)" if is_embed else ""
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
-        await ctx.send(f"✧ Sticky message protocol engaged{format_str}.", delete_after=4.0)
 
     @commands.command(name="unsticky")
     async def unsticky_prefix(self, ctx: commands.Context):
