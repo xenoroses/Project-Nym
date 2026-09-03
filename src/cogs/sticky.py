@@ -112,13 +112,19 @@ class StickyCog(commands.Cog):
 
     async def _get_sticky_data(self, channel_id: int) -> Optional[dict]:
         """Fetch sticky message data from Upstash Redis or SQLite fallback."""
-        key = f"sticky:{channel_id}"
+        key = f"nym:sticky:{channel_id}"
+        legacy_key = f"sticky:{channel_id}"
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 raw_data = await self.bot.upstash.get(key)
+                if not raw_data:
+                    raw_data = await self.bot.upstash.get(legacy_key)
                 if raw_data:
                     parsed = json.loads(raw_data)
+                    if isinstance(parsed, str):
+                        try: parsed = json.loads(parsed)
+                        except Exception: pass
                     if isinstance(parsed, dict):
                         if parsed.get("disabled"):
                             return None
@@ -157,7 +163,8 @@ class StickyCog(commands.Cog):
         last_id: Optional[int] = None
     ) -> None:
         """Save sticky message data to both SQLite DB and Upstash Redis."""
-        key = f"sticky:{channel_id}"
+        key = f"nym:sticky:{channel_id}"
+        legacy_key = f"sticky:{channel_id}"
         data = {
             "message": message_text,
             "is_embed": is_embed,
@@ -180,12 +187,14 @@ class StickyCog(commands.Cog):
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.set(key, json_str)
+                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}), ex_seconds=86400)
             except Exception as e:
                 logger.warning(f"Upstash Redis set failed for sticky:{channel_id}: {e}")
 
     async def _delete_sticky_data(self, channel: discord.TextChannel) -> bool:
         """Remove sticky message from both SQLite DB and Upstash Redis, with channel history sweep."""
-        key = f"sticky:{channel.id}"
+        key = f"nym:sticky:{channel.id}"
+        legacy_key = f"sticky:{channel.id}"
         data = await self._get_sticky_data(channel.id)
         deleted = False
 
@@ -204,7 +213,9 @@ class StickyCog(commands.Cog):
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.delete(key)
+                await self.bot.upstash.delete(legacy_key)
                 await self.bot.upstash.set(key, json.dumps({"disabled": True}), ex_seconds=86400)
+                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}), ex_seconds=86400)
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel.id}: {e}")
 
