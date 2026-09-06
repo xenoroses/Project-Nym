@@ -118,7 +118,7 @@ class ConfessionCog(commands.Cog):
             title="💖 Anonymous Confession Portal",
             description="Click the button below to submit an anonymous confession.\n"
                         "Your identity will remain completely hidden from server members.",
-            color=EmbedBuilder.COLOR_NEKOTINA,
+            color=discord.Color.from_rgb(88, 101, 242),
         )
 
         view = ConfessionPanelView(self.bot, self)
@@ -237,10 +237,9 @@ class ConfessionCog(commands.Cog):
                     pass
             return
 
-        # 1. Post Anonymous Confession to Public Channel (No Counter / ID)
+        # 1. Post Anonymous Confession to Public Channel (Title-Less Quote Card)
         public_embed = EmbedBuilder.base(
-            title="💖 Anonymous Confession",
-            description=content,
+            description=f">>> *“{content}”*",
             color=EmbedBuilder.COLOR_NEKOTINA,
             include_timestamp=False,
         )
@@ -374,7 +373,7 @@ class ConfessionCog(commands.Cog):
             title="💖 Anonymous Confession Portal",
             description="Click the button below to submit an **anonymous confession**.\n"
                         "Your identity will remain completely hidden from regular server members.",
-            color=EmbedBuilder.COLOR_NEKOTINA,
+            color=discord.Color.from_rgb(88, 101, 242),
         )
         view = ConfessionPanelView(self.bot, self)
 
@@ -412,10 +411,10 @@ class ConfessionCog(commands.Cog):
 
         if sub == "panel" and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
             embed = EmbedBuilder.base(
-                title="🌸 Anonymous Confession Portal",
+                title="💖 Anonymous Confession Portal",
                 description="Click the button below to submit an anonymous confession.\n"
                             "Your identity will remain completely hidden from server members.",
-                color=EmbedBuilder.COLOR_NEKOTINA,
+                color=discord.Color.from_rgb(88, 101, 242),
             )
             view = ConfessionPanelView(self.bot, self)
             await ctx.channel.send(embed=embed, view=view)
