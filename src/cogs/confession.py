@@ -118,7 +118,7 @@ class ConfessionCog(commands.Cog):
             title="💖 Anonymous Confession Portal",
             description="Click the button below to submit an anonymous confession.\n"
                         "Your identity will remain completely hidden from server members.",
-            color=discord.Color.from_rgb(88, 101, 242),
+            color=EmbedBuilder.COLOR_NEKOTINA,
         )
 
         view = ConfessionPanelView(self.bot, self)
@@ -373,7 +373,7 @@ class ConfessionCog(commands.Cog):
             title="💖 Anonymous Confession Portal",
             description="Click the button below to submit an **anonymous confession**.\n"
                         "Your identity will remain completely hidden from regular server members.",
-            color=discord.Color.from_rgb(88, 101, 242),
+            color=EmbedBuilder.COLOR_NEKOTINA,
         )
         view = ConfessionPanelView(self.bot, self)
 
@@ -414,7 +414,7 @@ class ConfessionCog(commands.Cog):
                 title="💖 Anonymous Confession Portal",
                 description="Click the button below to submit an anonymous confession.\n"
                             "Your identity will remain completely hidden from server members.",
-                color=discord.Color.from_rgb(88, 101, 242),
+                color=EmbedBuilder.COLOR_NEKOTINA,
             )
             view = ConfessionPanelView(self.bot, self)
             await ctx.channel.send(embed=embed, view=view)
