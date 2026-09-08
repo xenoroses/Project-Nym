@@ -16,8 +16,8 @@ class EmbedBuilder:
     @classmethod
     def base(
         cls,
-        title: str,
         description: str,
+        title: Optional[str] = None,
         color: discord.Color = COLOR_NEKOTINA,
         author: Optional[Union[discord.User, discord.Member]] = None,
         footer: Optional[str] = None,
@@ -26,8 +26,9 @@ class EmbedBuilder:
     ) -> discord.Embed:
         """Create a clean, minimalist base embed."""
         ts = datetime.datetime.now(datetime.timezone.utc) if include_timestamp else None
+        title_clean = title.strip() if title and title.strip() else None
         embed = discord.Embed(
-            title=title,
+            title=title_clean,
             description=description,
             color=color,
             timestamp=ts,

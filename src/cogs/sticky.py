@@ -96,10 +96,28 @@ class StickyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.channel_locks = defaultdict(asyncio.Lock)
+        self.sticky_cache = {}  # Fast RAM cache layer to shield Upstash Redis quota
         self.prune_trackers.start()
 
     def cog_unload(self):
         self.prune_trackers.cancel()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Pre-populate RAM cache from SQLite DB on startup to shield Upstash Redis quota."""
+        try:
+            rows = await self.bot.db.fetch_all("SELECT channel_id, message, is_embed, last_message_id FROM sticky_messages")
+            if rows:
+                for row in rows:
+                    if row["message"]:
+                        cid = int(row["channel_id"])
+                        self.sticky_cache[cid] = {
+                            "message": row["message"],
+                            "is_embed": bool(row["is_embed"]),
+                            "last_id": row["last_message_id"]
+                        }
+        except Exception as e:
+            logger.warning(f"Failed pre-populating sticky RAM cache from SQLite: {e}")
 
     @tasks.loop(hours=24)
     async def prune_trackers(self):
@@ -108,10 +126,17 @@ class StickyCog(commands.Cog):
             if not self.bot.get_channel(channel_id):
                 del self.channel_locks[channel_id]
 
-    # --- Storage Helpers (Upstash Redis + SQLite) ---
+    # --- Storage Helpers (Upstash Redis + SQLite + RAM Cache) ---
 
     async def _get_sticky_data(self, channel_id: int) -> Optional[dict]:
-        """Fetch sticky message data from Upstash Redis or SQLite fallback."""
+        """Fetch sticky message data with RAM Cache -> Upstash Redis -> SQLite fallback."""
+        if channel_id in self.sticky_cache:
+            cached = self.sticky_cache[channel_id]
+            if not cached or cached.get("disabled"):
+                return None
+            if cached.get("message"):
+                return cached
+
         key = f"nym:sticky:{channel_id}"
         legacy_key = f"sticky:{channel_id}"
 
@@ -127,10 +152,11 @@ class StickyCog(commands.Cog):
                         except Exception: pass
                     if isinstance(parsed, dict):
                         if parsed.get("disabled"):
+                            self.sticky_cache[channel_id] = {"disabled": True}
                             return None
                         if parsed.get("message"):
+                            self.sticky_cache[channel_id] = parsed
                             return parsed
-                    return None
             except Exception as e:
                 logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
 
@@ -146,12 +172,15 @@ class StickyCog(commands.Cog):
                     "is_embed": is_embed,
                     "last_id": row["last_message_id"]
                 }
+                self.sticky_cache[channel_id] = data
                 if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
-                    await self.bot.upstash.set(key, json.dumps(data))
+                    try: await self.bot.upstash.set(key, json.dumps(data))
+                    except Exception: pass
                 return data
         except Exception as e:
             logger.error(f"SQLite read error for sticky:{channel_id}: {e}")
 
+        self.sticky_cache[channel_id] = {"disabled": True}
         return None
 
     async def _set_sticky_data(
@@ -162,7 +191,7 @@ class StickyCog(commands.Cog):
         is_embed: bool = False,
         last_id: Optional[int] = None
     ) -> None:
-        """Save sticky message data to both SQLite DB and Upstash Redis."""
+        """Save sticky message data to RAM Cache, SQLite DB, and Upstash Redis."""
         key = f"nym:sticky:{channel_id}"
         legacy_key = f"sticky:{channel_id}"
         data = {
@@ -170,19 +199,23 @@ class StickyCog(commands.Cog):
             "is_embed": is_embed,
             "last_id": last_id
         }
+        self.sticky_cache[channel_id] = data
         json_str = json.dumps(data)
 
-        await self.bot.db.execute(
-            """
-            INSERT INTO sticky_messages (channel_id, guild_id, message, is_embed, last_message_id)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(channel_id) DO UPDATE SET
-                message = excluded.message,
-                is_embed = excluded.is_embed,
-                last_message_id = excluded.last_message_id
-            """,
-            (channel_id, guild_id, message_text, 1 if is_embed else 0, last_id)
-        )
+        try:
+            await self.bot.db.execute(
+                """
+                INSERT INTO sticky_messages (channel_id, guild_id, message, is_embed, last_message_id)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    message = excluded.message,
+                    is_embed = excluded.is_embed,
+                    last_message_id = excluded.last_message_id
+                """,
+                (channel_id, guild_id, message_text, 1 if is_embed else 0, last_id)
+            )
+        except Exception as e:
+            logger.error(f"SQLite write error for sticky:{channel_id}: {e}")
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
@@ -192,13 +225,17 @@ class StickyCog(commands.Cog):
                 logger.warning(f"Upstash Redis set failed for sticky:{channel_id}: {e}")
 
     async def _delete_sticky_data(self, channel: discord.TextChannel) -> bool:
-        """Remove sticky message from both SQLite DB and Upstash Redis, with channel history sweep."""
+        """Remove sticky message from RAM Cache, SQLite DB, and Upstash Redis, with channel history sweep."""
         key = f"nym:sticky:{channel.id}"
         legacy_key = f"sticky:{channel.id}"
+
+        # 1. Instantly mark disabled in RAM cache
+        self.sticky_cache[channel.id] = {"disabled": True}
+
         data = await self._get_sticky_data(channel.id)
         deleted = False
 
-        if data:
+        if data and not data.get("disabled"):
             deleted = True
             last_id = data.get("last_id")
             if last_id:
@@ -208,7 +245,13 @@ class StickyCog(commands.Cog):
                 except Exception:
                     pass
 
-        await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel.id,))
+        # Re-assert disabled state in RAM cache
+        self.sticky_cache[channel.id] = {"disabled": True}
+
+        try:
+            await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel.id,))
+        except Exception:
+            pass
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
