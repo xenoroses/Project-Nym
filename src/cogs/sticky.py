@@ -304,8 +304,17 @@ class StickyCog(commands.Cog):
     async def _send_sticky(self, channel: discord.TextChannel, message_text: str, is_embed: bool) -> discord.Message:
         """Helper to post the sticky message as a clean embed or plain text."""
         if is_embed:
+            title = None
+            desc = message_text.strip()
+
+            if desc.startswith("# ") or desc.startswith("## "):
+                lines = desc.split("\n", 1)
+                title = lines[0].lstrip("#").strip()
+                desc = lines[1].strip() if len(lines) > 1 else ""
+
             embed = discord.Embed(
-                description=message_text,
+                title=title if title else None,
+                description=desc if desc else None,
                 color=EmbedBuilder.COLOR_NEKOTINA
             )
             return await channel.send(embed=embed)
