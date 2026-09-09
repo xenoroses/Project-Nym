@@ -132,10 +132,9 @@ class StickyCog(commands.Cog):
         """Fetch sticky message data with RAM Cache -> Upstash Redis -> SQLite fallback."""
         if channel_id in self.sticky_cache:
             cached = self.sticky_cache[channel_id]
-            if not cached or cached.get("disabled"):
+            if not cached or cached.get("disabled") or not cached.get("message"):
                 return None
-            if cached.get("message"):
-                return cached
+            return cached
 
         key = f"nym:sticky:{channel_id}"
         legacy_key = f"sticky:{channel_id}"
@@ -143,20 +142,36 @@ class StickyCog(commands.Cog):
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 raw_data = await self.bot.upstash.get(key)
-                if not raw_data:
-                    raw_data = await self.bot.upstash.get(legacy_key)
                 if raw_data:
                     parsed = json.loads(raw_data)
                     if isinstance(parsed, str):
                         try: parsed = json.loads(parsed)
                         except Exception: pass
                     if isinstance(parsed, dict):
-                        if parsed.get("disabled"):
+                        if parsed.get("disabled") or not parsed.get("message"):
                             self.sticky_cache[channel_id] = {"disabled": True}
                             return None
-                        if parsed.get("message"):
-                            self.sticky_cache[channel_id] = parsed
-                            return parsed
+                        self.sticky_cache[channel_id] = parsed
+                        return parsed
+
+                # Only check legacy key if namespaced key is completely missing
+                legacy_raw = await self.bot.upstash.get(legacy_key)
+                if legacy_raw:
+                    parsed_leg = json.loads(legacy_raw)
+                    if isinstance(parsed_leg, str):
+                        try: parsed_leg = json.loads(parsed_leg)
+                        except Exception: pass
+                    if isinstance(parsed_leg, dict):
+                        if parsed_leg.get("disabled") or not parsed_leg.get("message"):
+                            self.sticky_cache[channel_id] = {"disabled": True}
+                            return None
+                        # Migrate legacy key to namespaced key
+                        self.sticky_cache[channel_id] = parsed_leg
+                        try:
+                            await self.bot.upstash.set(key, json.dumps(parsed_leg))
+                            await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}))
+                        except Exception: pass
+                        return parsed_leg
             except Exception as e:
                 logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
 
@@ -220,22 +235,22 @@ class StickyCog(commands.Cog):
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.set(key, json_str)
-                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}), ex_seconds=86400)
+                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}))
             except Exception as e:
                 logger.warning(f"Upstash Redis set failed for sticky:{channel_id}: {e}")
 
     async def _delete_sticky_data(self, channel: discord.TextChannel) -> bool:
-        """Remove sticky message from RAM Cache, SQLite DB, and Upstash Redis, with channel history sweep."""
+        """Remove sticky message permanently from RAM Cache, SQLite DB, and Upstash Redis."""
         key = f"nym:sticky:{channel.id}"
         legacy_key = f"sticky:{channel.id}"
 
         # 1. Instantly mark disabled in RAM cache
-        self.sticky_cache[channel.id] = {"disabled": True}
+        self.sticky_cache[channel.id] = {"disabled": True, "message": None}
 
         data = await self._get_sticky_data(channel.id)
         deleted = False
 
-        if data and not data.get("disabled"):
+        if data and not data.get("disabled") and data.get("message"):
             deleted = True
             last_id = data.get("last_id")
             if last_id:
@@ -245,8 +260,8 @@ class StickyCog(commands.Cog):
                 except Exception:
                     pass
 
-        # Re-assert disabled state in RAM cache
-        self.sticky_cache[channel.id] = {"disabled": True}
+        # Permanent disable record in RAM cache
+        self.sticky_cache[channel.id] = {"disabled": True, "message": None}
 
         try:
             await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel.id,))
@@ -255,12 +270,32 @@ class StickyCog(commands.Cog):
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
+                disabled_payload = json.dumps({"disabled": True, "message": None})
+                await self.bot.upstash.set(key, disabled_payload)
+                await self.bot.upstash.set(legacy_key, disabled_payload)
                 await self.bot.upstash.delete(key)
                 await self.bot.upstash.delete(legacy_key)
-                await self.bot.upstash.set(key, json.dumps({"disabled": True}), ex_seconds=86400)
-                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}), ex_seconds=86400)
+                await self.bot.upstash.set(key, disabled_payload)
+                await self.bot.upstash.set(legacy_key, disabled_payload)
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel.id}: {e}")
+
+        # Fallback sweep for orphaned bot messages
+        try:
+            async for msg in channel.history(limit=15):
+                if msg.author.id == self.bot.user.id:
+                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active"]):
+                        continue
+                    try:
+                        await msg.delete()
+                        deleted = True
+                        break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        return deleted
 
         # Fallback sweep for orphaned bot messages
         try:
