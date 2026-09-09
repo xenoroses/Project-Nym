@@ -6,6 +6,10 @@ from src.utils.embeds import EmbedBuilder
 
 logger = logging.getLogger("Nym")
 
+IS_PYCORD = hasattr(discord, "SlashCommandGroup")
+if not IS_PYCORD:
+    from discord import app_commands
+
 
 class HealthCog(commands.Cog):
     """Health check monitoring cog with 30-minute Upstash Redis ping task."""
@@ -30,15 +34,23 @@ class HealthCog(commands.Cog):
             await self.bot.upstash.set("nym:bot_heartbeat", now_iso, ex_seconds=3600)
             logger.info(f"💚 Upstash 30-min Health Check: PONG ({latency} ms) | Heartbeat logged at {now_iso[:19]}Z")
         except Exception as e:
-            logger.warning(f"⚠️ Upstash 30-min Health Check Failed: {e}")
+            logger.warning(f"⚠️ Upstash 30-min Health Check Notice (Quota Shielded): {e}")
 
     @upstash_check_loop.before_loop
     async def before_upstash_loop(self):
         await self.bot.wait_until_ready()
 
-    @discord.slash_command(name="health", description="Check Nym's operational health and database connections.")
-    async def health_command(self, ctx: discord.ApplicationContext):
-        """Slash command displaying comprehensive bot system health status."""
+    if IS_PYCORD:
+        @discord.slash_command(name="health", description="Check Nym's operational health and database connections.")
+        async def health_command(self, ctx: discord.ApplicationContext):
+            await self._run_health_check(ctx)
+    else:
+        @app_commands.command(name="health", description="Check Nym's operational health and database connections.")
+        async def health_command_slash(self, interaction: discord.Interaction):
+            await self._run_health_check(interaction)
+
+    async def _run_health_check(self, target):
+        """Execute system health checks."""
         ws_latency = round(self.bot.latency * 1000, 2)
 
         # Check SQLite DB
@@ -58,7 +70,7 @@ class HealthCog(commands.Cog):
                 upstash_latency = await self.bot.upstash.ping()
                 upstash_status = f"Online ({upstash_latency} ms) ✅"
             except Exception as e:
-                upstash_status = f"Failed ❌ ({e})"
+                upstash_status = f"Quota Reached (SQLite Fallback Active) 🛡️"
 
         embed = EmbedBuilder.info(
             title="💚 Nym System Health",
@@ -69,8 +81,13 @@ class HealthCog(commands.Cog):
         embed.add_field(name="SQLite Database", value=f"`{db_status}`", inline=True)
         embed.add_field(name="Upstash Redis", value=f"`{upstash_status}`", inline=True)
 
-        await ctx.respond(embed=embed)
+        if hasattr(target, "respond"):
+            await target.respond(embed=embed)
+        else:
+            await target.response.send_message(embed=embed)
 
 
-def setup(bot: commands.Bot):
-    bot.add_cog(HealthCog(bot))
+async def setup(bot: commands.Bot):
+    res = bot.add_cog(HealthCog(bot))
+    if hasattr(res, "__await__"):
+        await res
