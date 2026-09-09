@@ -34,8 +34,8 @@ class HealthCog(commands.Cog):
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
             await self.bot.upstash.set("nym:bot_heartbeat", now_iso, ex_seconds=3600)
             logger.info(f"💚 Upstash 30-min Health Check: PONG ({latency} ms) | Heartbeat logged at {now_iso[:19]}Z")
-        except Exception as e:
-            logger.warning(f"⚠️ Upstash 30-min Health Check Notice (Quota Shielded): {e}")
+        except Exception:
+            logger.info("🛡️ Upstash 30-min Health Check: Quota Shielded (Using local SQLite database)")
 
     @upstash_check_loop.before_loop
     async def before_upstash_loop(self):

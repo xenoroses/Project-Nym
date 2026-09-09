@@ -19,8 +19,6 @@ import asyncio
 def run_nym_bot():
     time.sleep(3)  # Short delay to allow Gradio to bind port 7860 first
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         import main
         main.main()
     except Exception as e:
