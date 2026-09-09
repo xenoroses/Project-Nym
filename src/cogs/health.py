@@ -87,7 +87,11 @@ class HealthCog(commands.Cog):
             await target.response.send_message(embed=embed)
 
 
-async def setup(bot: commands.Bot):
+def setup(bot: commands.Bot):
     res = bot.add_cog(HealthCog(bot))
-    if hasattr(res, "__await__"):
-        await res
+    if asyncio.iscoroutine(res):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(res)
+        except RuntimeError:
+            pass

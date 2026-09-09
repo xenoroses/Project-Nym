@@ -581,7 +581,11 @@ class StickyCog(commands.Cog):
                 logger.error(f"Failed to post sticky message in channel {message.channel.id}: {e}")
 
 
-async def setup(bot: commands.Bot):
+def setup(bot: commands.Bot):
     res = bot.add_cog(StickyCog(bot))
     if asyncio.iscoroutine(res):
-        await res
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(res)
+        except RuntimeError:
+            pass
