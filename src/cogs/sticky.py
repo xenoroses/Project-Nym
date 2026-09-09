@@ -244,23 +244,35 @@ class StickyCog(commands.Cog):
         key = f"nym:sticky:{channel.id}"
         legacy_key = f"sticky:{channel.id}"
 
-        # 1. Instantly mark disabled in RAM cache
-        self.sticky_cache[channel.id] = {"disabled": True, "message": None}
-
+        # 1. Fetch current active data BEFORE disabling cache
         data = await self._get_sticky_data(channel.id)
         deleted = False
 
-        if data and not data.get("disabled") and data.get("message"):
+        # 2. Delete physical sticky message from Discord channel
+        if data and not data.get("disabled") and data.get("last_id"):
             deleted = True
-            last_id = data.get("last_id")
-            if last_id:
-                try:
-                    old_msg = await channel.fetch_message(int(last_id))
-                    await old_msg.delete()
-                except Exception:
-                    pass
+            try:
+                old_msg = await channel.fetch_message(int(data["last_id"]))
+                await old_msg.delete()
+            except Exception:
+                pass
 
-        # Permanent disable record in RAM cache
+        # 3. Sweep channel history for any orphaned bot sticky messages
+        try:
+            async for msg in channel.history(limit=15):
+                if msg.author.id == self.bot.user.id:
+                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active"]):
+                        continue
+                    try:
+                        await msg.delete()
+                        deleted = True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # 4. Permanently assert disabled state in RAM cache, SQLite DB, and Upstash Redis
+        disabled_payload = json.dumps({"disabled": True, "message": None})
         self.sticky_cache[channel.id] = {"disabled": True, "message": None}
 
         try:
@@ -270,7 +282,6 @@ class StickyCog(commands.Cog):
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
-                disabled_payload = json.dumps({"disabled": True, "message": None})
                 await self.bot.upstash.set(key, disabled_payload)
                 await self.bot.upstash.set(legacy_key, disabled_payload)
                 await self.bot.upstash.delete(key)
@@ -279,38 +290,6 @@ class StickyCog(commands.Cog):
                 await self.bot.upstash.set(legacy_key, disabled_payload)
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel.id}: {e}")
-
-        # Fallback sweep for orphaned bot messages
-        try:
-            async for msg in channel.history(limit=15):
-                if msg.author.id == self.bot.user.id:
-                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active"]):
-                        continue
-                    try:
-                        await msg.delete()
-                        deleted = True
-                        break
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        return deleted
-
-        # Fallback sweep for orphaned bot messages
-        try:
-            async for msg in channel.history(limit=15):
-                if msg.author.id == self.bot.user.id:
-                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active"]):
-                        continue
-                    try:
-                        await msg.delete()
-                        deleted = True
-                        break
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
         return deleted
 
