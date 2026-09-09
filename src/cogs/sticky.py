@@ -10,36 +10,63 @@ from src.utils.embeds import EmbedBuilder
 
 logger = logging.getLogger("Nym")
 
+# Dual-library compatibility layer for Py-Cord and Discord.py v2
+IS_PYCORD = hasattr(discord, "SlashCommandGroup")
+if not IS_PYCORD:
+    from discord import app_commands
+
 
 class NymStickyModal(discord.ui.Modal):
     """Interactive Modal for entering multiline sticky messages with markdown headers."""
 
     def __init__(self, bot: commands.Bot, cog: "StickyCog", target_channel: discord.TextChannel):
-        super().__init__(title="Set Sticky Notice")
+        if IS_PYCORD:
+            super().__init__(title="Set Sticky Notice")
+        else:
+            super().__init__(title="Set Sticky Notice")
+
         self.bot = bot
         self.cog = cog
         self.target_channel = target_channel
 
-        self.add_item(
-            discord.ui.InputText(
+        if IS_PYCORD:
+            self.add_item(
+                discord.ui.InputText(
+                    label="Sticky Message Content",
+                    style=discord.InputTextStyle.paragraph,
+                    placeholder="Type your multiline sticky message here...\nUse # Title, ## Header, **bold**, or > quotes.",
+                    required=True,
+                    max_length=2000,
+                )
+            )
+            self.add_item(
+                discord.ui.InputText(
+                    label="Format as Rich Embed? (yes/no)",
+                    style=discord.InputTextStyle.short,
+                    placeholder="Type 'yes' to send inside a sleek embed, or 'no' for plain text.",
+                    required=False,
+                    default="no",
+                    max_length=5,
+                )
+            )
+        else:
+            self.msg_input = discord.ui.TextInput(
                 label="Sticky Message Content",
-                style=discord.InputTextStyle.paragraph,
+                style=discord.TextStyle.paragraph,
                 placeholder="Type your multiline sticky message here...\nUse # Title, ## Header, **bold**, or > quotes.",
                 required=True,
                 max_length=2000,
             )
-        )
-
-        self.add_item(
-            discord.ui.InputText(
+            self.add_item(self.msg_input)
+            self.embed_input = discord.ui.TextInput(
                 label="Format as Rich Embed? (yes/no)",
-                style=discord.InputTextStyle.short,
+                style=discord.TextStyle.short,
                 placeholder="Type 'yes' to send inside a sleek embed, or 'no' for plain text.",
                 required=False,
                 default="no",
                 max_length=5,
             )
-        )
+            self.add_item(self.embed_input)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -48,7 +75,6 @@ class NymStickyModal(discord.ui.Modal):
         as_embed = as_embed_str in ("yes", "y", "true", "1")
 
         async with self.cog.channel_locks[self.target_channel.id]:
-            # Purge existing sticky configuration and physical message
             await self.cog._delete_sticky_data(self.target_channel)
 
             sent_msg_id = None
@@ -74,6 +100,9 @@ class NymStickyModal(discord.ui.Modal):
                         f"• **Content Preview:**\n>>> {message_text[:200]}" + ("..." if len(message_text) > 200 else ""),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.callback(interaction)
 
 
 class StickyCog(commands.Cog):
@@ -116,54 +145,17 @@ class StickyCog(commands.Cog):
             if not self.bot.get_channel(channel_id):
                 del self.channel_locks[channel_id]
 
-    # --- Storage Helpers (Upstash Redis + SQLite + RAM Cache) ---
+    # --- Storage Helpers (SQLite DB -> Upstash Redis -> RAM Cache) ---
 
     async def _get_sticky_data(self, channel_id: int) -> Optional[dict]:
-        """Fetch sticky message data with RAM Cache -> Upstash Redis -> SQLite fallback."""
+        """Fetch sticky message data with RAM Cache -> SQLite DB -> Upstash Redis fallback."""
         if channel_id in self.sticky_cache:
             cached = self.sticky_cache[channel_id]
             if not cached or cached.get("disabled") or not cached.get("message"):
                 return None
             return cached
 
-        key = f"nym:sticky:{channel_id}"
-        legacy_key = f"sticky:{channel_id}"
-
-        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
-            try:
-                raw_data = await self.bot.upstash.get(key)
-                if raw_data:
-                    parsed = json.loads(raw_data)
-                    if isinstance(parsed, str):
-                        try: parsed = json.loads(parsed)
-                        except Exception: pass
-                    if isinstance(parsed, dict):
-                        if parsed.get("disabled") or not parsed.get("message"):
-                            self.sticky_cache[channel_id] = {"disabled": True, "message": None}
-                            return None
-                        self.sticky_cache[channel_id] = parsed
-                        return parsed
-
-                # Check legacy key if namespaced key is missing
-                legacy_raw = await self.bot.upstash.get(legacy_key)
-                if legacy_raw:
-                    parsed_leg = json.loads(legacy_raw)
-                    if isinstance(parsed_leg, str):
-                        try: parsed_leg = json.loads(parsed_leg)
-                        except Exception: pass
-                    if isinstance(parsed_leg, dict):
-                        if parsed_leg.get("disabled") or not parsed_leg.get("message"):
-                            self.sticky_cache[channel_id] = {"disabled": True, "message": None}
-                            return None
-                        self.sticky_cache[channel_id] = parsed_leg
-                        try:
-                            await self.bot.upstash.set(key, json.dumps(parsed_leg))
-                            await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True, "message": None}))
-                        except Exception: pass
-                        return parsed_leg
-            except Exception as e:
-                logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
-
+        # SQLite DB primary check (shields against Redis quota limits)
         try:
             row = await self.bot.db.fetch_one(
                 "SELECT message, is_embed, last_message_id FROM sticky_messages WHERE channel_id = ?",
@@ -177,12 +169,29 @@ class StickyCog(commands.Cog):
                     "last_id": row["last_message_id"]
                 }
                 self.sticky_cache[channel_id] = data
-                if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
-                    try: await self.bot.upstash.set(key, json.dumps(data))
-                    except Exception: pass
                 return data
         except Exception as e:
             logger.error(f"SQLite read error for sticky:{channel_id}: {e}")
+
+        key = f"nym:sticky:{channel_id}"
+        legacy_key = f"sticky:{channel_id}"
+
+        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+            try:
+                raw_data = await self.bot.upstash.get(key) or await self.bot.upstash.get(legacy_key)
+                if raw_data:
+                    parsed = json.loads(raw_data)
+                    if isinstance(parsed, str):
+                        try: parsed = json.loads(parsed)
+                        except Exception: pass
+                    if isinstance(parsed, dict):
+                        if parsed.get("disabled") or not parsed.get("message"):
+                            self.sticky_cache[channel_id] = {"disabled": True, "message": None}
+                            return None
+                        self.sticky_cache[channel_id] = parsed
+                        return parsed
+            except Exception as e:
+                logger.warning(f"Upstash Redis read failed for sticky:{channel_id}: {e}")
 
         self.sticky_cache[channel_id] = {"disabled": True, "message": None}
         return None
@@ -233,7 +242,6 @@ class StickyCog(commands.Cog):
         key = f"nym:sticky:{channel.id}"
         legacy_key = f"sticky:{channel.id}"
 
-        # 1. Direct check: read last_id from RAM cache OR SQLite DB
         cached_data = self.sticky_cache.get(channel.id)
         had_active_config = False
         target_last_id = None
@@ -257,7 +265,6 @@ class StickyCog(commands.Cog):
 
         deleted_physical = False
 
-        # 2. Delete physical sticky message from Discord channel if last_id is known
         if target_last_id:
             try:
                 old_msg = await channel.fetch_message(int(target_last_id))
@@ -266,7 +273,6 @@ class StickyCog(commands.Cog):
             except Exception:
                 pass
 
-        # 3. Sweep channel history (up to 30 messages) for any orphaned bot sticky messages
         try:
             async for msg in channel.history(limit=30):
                 if msg.author.id == self.bot.user.id:
@@ -280,7 +286,6 @@ class StickyCog(commands.Cog):
         except Exception:
             pass
 
-        # 4. UNCONDITIONALLY assert disabled state in RAM cache, SQLite DB, and Upstash Redis
         disabled_payload = json.dumps({"disabled": True, "message": None})
         self.sticky_cache[channel.id] = {"disabled": True, "message": None}
 
@@ -322,138 +327,130 @@ class StickyCog(commands.Cog):
 
     # --- Slash Commands Group ---
 
-    sticky = discord.SlashCommandGroup("sticky", "Sticky message engine controls.")
+    if IS_PYCORD:
+        sticky = discord.SlashCommandGroup("sticky", "Sticky message engine controls.")
 
-    @sticky.command(name="modal", description="Open multiline paragraph modal popup to set sticky notice with newlines & headers.")
-    async def sticky_modal_slash(
-        self,
-        ctx: discord.ApplicationContext,
-        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None),
-    ):
-        """Slash command opening multiline modal popup."""
-        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
-            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+        @sticky.command(name="modal", description="Open multiline paragraph modal popup to set sticky notice with newlines & headers.")
+        async def sticky_modal_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None),
+        ):
+            if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+                return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+            target_ch = channel or ctx.channel
+            modal = NymStickyModal(self.bot, self, target_ch)
+            await ctx.send_modal(modal)
 
-        target_ch = channel or ctx.channel
-        modal = NymStickyModal(self.bot, self, target_ch)
-        await ctx.send_modal(modal)
+        @sticky.command(name="set", description="Set a sticky notice message for a channel.")
+        async def sticky_set_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            message: str = discord.Option(description="The sticky notice message content"),
+            channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None),
+            as_embed: bool = discord.Option(description="Format sticky message as a rich embed?", default=False)
+        ):
+            if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+                return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
 
-    @sticky.command(name="set", description="Set a sticky notice message for a channel.")
-    async def sticky_set_slash(
-        self,
-        ctx: discord.ApplicationContext,
-        message: str = discord.Option(description="The sticky notice message content"),
-        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None),
-        as_embed: bool = discord.Option(description="Format sticky message as a rich embed?", default=False)
-    ):
-        """Slash command to set a sticky notice."""
-        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
-            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+            target_ch = channel or ctx.channel
+            async with self.channel_locks[target_ch.id]:
+                await self._delete_sticky_data(target_ch)
 
-        target_ch = channel or ctx.channel
-        async with self.channel_locks[target_ch.id]:
-            await self._delete_sticky_data(target_ch)
+                sent_msg_id = None
+                try:
+                    new_msg = await self._send_sticky(target_ch, message, as_embed)
+                    sent_msg_id = new_msg.id
+                except Exception:
+                    pass
 
-            sent_msg_id = None
-            try:
-                new_msg = await self._send_sticky(target_ch, message, as_embed)
-                sent_msg_id = new_msg.id
-            except Exception:
-                pass
+                await self._set_sticky_data(
+                    channel_id=target_ch.id,
+                    guild_id=ctx.guild.id,
+                    message_text=message,
+                    is_embed=as_embed,
+                    last_id=sent_msg_id
+                )
 
-            await self._set_sticky_data(
-                channel_id=target_ch.id,
-                guild_id=ctx.guild.id,
-                message_text=message,
-                is_embed=as_embed,
-                last_id=sent_msg_id
-            )
-
-        format_type = "Rich Embed" if as_embed else "Plain Text"
-        embed = EmbedBuilder.success(
-            title="Sticky Message Set",
-            description=f"Sticky message configured for {target_ch.mention}.\n\n"
-                        f"**Format:** `{format_type}`\n"
-                        f"**Notice:**\n>>> {message}"
-        )
-        await ctx.respond(embed=embed, ephemeral=True)
-
-    @sticky.command(name="remove", description="Remove the sticky message from a channel.")
-    async def sticky_remove_slash(
-        self,
-        ctx: discord.ApplicationContext,
-        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
-    ):
-        """Slash command to remove a sticky message."""
-        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
-            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
-
-        target_ch = channel or ctx.channel
-        async with self.channel_locks[target_ch.id]:
-            deleted = await self._delete_sticky_data(target_ch)
-
-        if deleted:
+            format_type = "Rich Embed" if as_embed else "Plain Text"
             embed = EmbedBuilder.success(
-                title="Sticky Message Removed",
-                description=f"Sticky message removed from {target_ch.mention}."
+                title="Sticky Message Set",
+                description=f"Sticky message configured for {target_ch.mention}.\n\n"
+                            f"**Format:** `{format_type}`\n"
+                            f"**Notice:**\n>>> {message}"
             )
-        else:
-            embed = EmbedBuilder.warning(
-                title="No Sticky Message",
-                description=f"There was no active sticky message configured in {target_ch.mention}."
+            await ctx.respond(embed=embed, ephemeral=True)
+
+        @sticky.command(name="remove", description="Remove the sticky message from a channel.")
+        async def sticky_remove_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
+        ):
+            if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+                return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
+            target_ch = channel or ctx.channel
+            async with self.channel_locks[target_ch.id]:
+                deleted = await self._delete_sticky_data(target_ch)
+
+            if deleted:
+                embed = EmbedBuilder.success(
+                    title="Sticky Message Removed",
+                    description=f"Sticky message removed from {target_ch.mention}."
+                )
+            else:
+                embed = EmbedBuilder.warning(
+                    title="No Sticky Message",
+                    description=f"There was no active sticky message configured in {target_ch.mention}."
+                )
+            await ctx.respond(embed=embed, ephemeral=True)
+
+        @sticky.command(name="unsticky", description="Remove the sticky notice message from a channel.")
+        async def sticky_unsticky_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
+        ):
+            await self.sticky_remove_slash(ctx, channel)
+
+        @sticky.command(name="list", description="List all active sticky messages in this server.")
+        async def sticky_list_slash(self, ctx: discord.ApplicationContext):
+            if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+                return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
+            rows = await self.bot.db.fetch_all(
+                "SELECT channel_id, message, is_embed FROM sticky_messages WHERE guild_id = ?",
+                (ctx.guild.id,)
             )
-        await ctx.respond(embed=embed, ephemeral=True)
 
-    @sticky.command(name="unsticky", description="Remove the sticky notice message from a channel.")
-    async def sticky_unsticky_slash(
-        self,
-        ctx: discord.ApplicationContext,
-        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
-    ):
-        """Slash subcommand alias (/sticky unsticky) to remove a sticky message."""
-        await self.sticky_remove_slash(ctx, channel)
+            if not rows:
+                embed = EmbedBuilder.warning("No Active Sticky Messages", "No channels currently have sticky messages in this server.")
+                return await ctx.respond(embed=embed, ephemeral=True)
 
-    @sticky.command(name="list", description="List all active sticky messages in this server.")
-    async def sticky_list_slash(self, ctx: discord.ApplicationContext):
-        """Slash command listing all active sticky messages."""
-        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
-            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+            lines = []
+            for r in rows:
+                ch = ctx.guild.get_channel(r["channel_id"])
+                ch_str = ch.mention if ch else f"`ID: {r['channel_id']}`"
+                fmt = "Embed" if r["is_embed"] else "Text"
+                snippet = r["message"][:40] + "..." if len(r["message"]) > 40 else r["message"]
+                lines.append(f"• {ch_str} (`{fmt}`): \"{snippet}\"")
 
-        rows = await self.bot.db.fetch_all(
-            "SELECT channel_id, message, is_embed FROM sticky_messages WHERE guild_id = ?",
-            (ctx.guild.id,)
-        )
+            embed = EmbedBuilder.base(
+                title="📌 Active Sticky Messages",
+                description="\n".join(lines),
+                color=EmbedBuilder.COLOR_NEKOTINA,
+                author=ctx.author,
+            )
+            await ctx.respond(embed=embed, ephemeral=True)
 
-        if not rows:
-            embed = EmbedBuilder.warning("No Active Sticky Messages", "No channels currently have sticky messages in this server.")
-            return await ctx.respond(embed=embed, ephemeral=True)
-
-        lines = []
-        for r in rows:
-            ch = ctx.guild.get_channel(r["channel_id"])
-            ch_str = ch.mention if ch else f"`ID: {r['channel_id']}`"
-            fmt = "Embed" if r["is_embed"] else "Text"
-            snippet = r["message"][:40] + "..." if len(r["message"]) > 40 else r["message"]
-            lines.append(f"• {ch_str} (`{fmt}`): \"{snippet}\"")
-
-        embed = EmbedBuilder.base(
-            title="📌 Active Sticky Messages",
-            description="\n".join(lines),
-            color=EmbedBuilder.COLOR_NEKOTINA,
-            author=ctx.author,
-        )
-        await ctx.respond(embed=embed, ephemeral=True)
-
-    # --- Standalone Slash Command (/unsticky) ---
-
-    @discord.slash_command(name="unsticky", description="Remove the sticky notice message from a channel.")
-    async def standalone_unsticky_slash(
-        self,
-        ctx: discord.ApplicationContext,
-        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
-    ):
-        """Standalone slash command (/unsticky) to remove a sticky message."""
-        await self.sticky_remove_slash(ctx, channel)
+        @discord.slash_command(name="unsticky", description="Remove the sticky notice message from a channel.")
+        async def standalone_unsticky_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
+        ):
+            await self.sticky_remove_slash(ctx, channel)
 
     # --- Prefix Command Fallbacks ---
 
@@ -522,8 +519,6 @@ class StickyCog(commands.Cog):
             return
 
         content_lower = message.content.lower().strip()
-        
-        # Check if message is a command invocation to avoid race conditions
         cmd_keywords = (
             "!sticky", "!unsticky", ",sticky", ",unsticky",
             "nym sticky", "nym unsticky", "hya sticky", "hya unsticky",
@@ -558,11 +553,9 @@ class StickyCog(commands.Cog):
             if not sticky_text:
                 return
 
-            # Re-check inside lock to eliminate race conditions
             if current_last_id and message.channel.last_message_id == int(current_last_id):
                 return
 
-            # Purge any existing bot sticky messages in recent channel history to guarantee 0 duplicates
             try:
                 async for past_msg in message.channel.history(limit=25):
                     if past_msg.author.id == self.bot.user.id and past_msg.id != message.id:
@@ -588,5 +581,7 @@ class StickyCog(commands.Cog):
                 logger.error(f"Failed to post sticky message in channel {message.channel.id}: {e}")
 
 
-def setup(bot: commands.Bot):
-    bot.add_cog(StickyCog(bot))
+async def setup(bot: commands.Bot):
+    res = bot.add_cog(StickyCog(bot))
+    if asyncio.iscoroutine(res):
+        await res
