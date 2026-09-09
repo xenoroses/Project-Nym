@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import logging
 import discord
@@ -87,11 +88,9 @@ class HealthCog(commands.Cog):
             await target.response.send_message(embed=embed)
 
 
-def setup(bot: commands.Bot):
-    res = bot.add_cog(HealthCog(bot))
-    if asyncio.iscoroutine(res):
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(res)
-        except RuntimeError:
-            pass
+if IS_PYCORD:
+    def setup(bot: commands.Bot):
+        bot.add_cog(HealthCog(bot))
+else:
+    async def setup(bot: commands.Bot):
+        await bot.add_cog(HealthCog(bot))
