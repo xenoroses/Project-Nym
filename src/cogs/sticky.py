@@ -48,25 +48,15 @@ class NymStickyModal(discord.ui.Modal):
         as_embed = as_embed_str in ("yes", "y", "true", "1")
 
         async with self.cog.channel_locks[self.target_channel.id]:
-            # Sweep channel history for previous sticky messages
-            try:
-                async for past_msg in self.target_channel.history(limit=15):
-                    if past_msg.author.id == self.bot.user.id:
-                        if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
-                            continue
-                        try:
-                            await past_msg.delete()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            # Purge existing sticky configuration and physical message
+            await self.cog._delete_sticky_data(self.target_channel)
 
             sent_msg_id = None
             try:
                 new_msg = await self.cog._send_sticky(self.target_channel, message_text, as_embed)
                 sent_msg_id = new_msg.id
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Failed sending initial sticky message from modal: {e}")
 
             await self.cog._set_sticky_data(
                 channel_id=self.target_channel.id,
@@ -149,12 +139,12 @@ class StickyCog(commands.Cog):
                         except Exception: pass
                     if isinstance(parsed, dict):
                         if parsed.get("disabled") or not parsed.get("message"):
-                            self.sticky_cache[channel_id] = {"disabled": True}
+                            self.sticky_cache[channel_id] = {"disabled": True, "message": None}
                             return None
                         self.sticky_cache[channel_id] = parsed
                         return parsed
 
-                # Only check legacy key if namespaced key is completely missing
+                # Check legacy key if namespaced key is missing
                 legacy_raw = await self.bot.upstash.get(legacy_key)
                 if legacy_raw:
                     parsed_leg = json.loads(legacy_raw)
@@ -163,13 +153,12 @@ class StickyCog(commands.Cog):
                         except Exception: pass
                     if isinstance(parsed_leg, dict):
                         if parsed_leg.get("disabled") or not parsed_leg.get("message"):
-                            self.sticky_cache[channel_id] = {"disabled": True}
+                            self.sticky_cache[channel_id] = {"disabled": True, "message": None}
                             return None
-                        # Migrate legacy key to namespaced key
                         self.sticky_cache[channel_id] = parsed_leg
                         try:
                             await self.bot.upstash.set(key, json.dumps(parsed_leg))
-                            await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}))
+                            await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True, "message": None}))
                         except Exception: pass
                         return parsed_leg
             except Exception as e:
@@ -195,7 +184,7 @@ class StickyCog(commands.Cog):
         except Exception as e:
             logger.error(f"SQLite read error for sticky:{channel_id}: {e}")
 
-        self.sticky_cache[channel_id] = {"disabled": True}
+        self.sticky_cache[channel_id] = {"disabled": True, "message": None}
         return None
 
     async def _set_sticky_data(
@@ -235,7 +224,7 @@ class StickyCog(commands.Cog):
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
                 await self.bot.upstash.set(key, json_str)
-                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True}))
+                await self.bot.upstash.set(legacy_key, json.dumps({"disabled": True, "message": None}))
             except Exception as e:
                 logger.warning(f"Upstash Redis set failed for sticky:{channel_id}: {e}")
 
@@ -244,41 +233,62 @@ class StickyCog(commands.Cog):
         key = f"nym:sticky:{channel.id}"
         legacy_key = f"sticky:{channel.id}"
 
-        # 1. Fetch current active data BEFORE disabling cache
-        data = await self._get_sticky_data(channel.id)
-        deleted = False
+        # 1. Direct check: read last_id from RAM cache OR SQLite DB
+        cached_data = self.sticky_cache.get(channel.id)
+        had_active_config = False
+        target_last_id = None
 
-        # 2. Delete physical sticky message from Discord channel
-        if data and not data.get("disabled") and data.get("last_id"):
-            deleted = True
+        if cached_data and isinstance(cached_data, dict):
+            if not cached_data.get("disabled") and cached_data.get("message"):
+                had_active_config = True
+                target_last_id = cached_data.get("last_id")
+
+        try:
+            row = await self.bot.db.fetch_one(
+                "SELECT message, last_message_id FROM sticky_messages WHERE channel_id = ?",
+                (channel.id,)
+            )
+            if row and row["message"]:
+                had_active_config = True
+                if not target_last_id:
+                    target_last_id = row["last_message_id"]
+        except Exception as e:
+            logger.error(f"SQLite check error during sticky deletion: {e}")
+
+        deleted_physical = False
+
+        # 2. Delete physical sticky message from Discord channel if last_id is known
+        if target_last_id:
             try:
-                old_msg = await channel.fetch_message(int(data["last_id"]))
+                old_msg = await channel.fetch_message(int(target_last_id))
                 await old_msg.delete()
+                deleted_physical = True
             except Exception:
                 pass
 
-        # 3. Sweep channel history for any orphaned bot sticky messages
+        # 3. Sweep channel history (up to 30 messages) for any orphaned bot sticky messages
         try:
-            async for msg in channel.history(limit=15):
+            async for msg in channel.history(limit=30):
                 if msg.author.id == self.bot.user.id:
-                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active"]):
+                    if msg.embeds and any(kw in (msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Sticky", "Active", "Portal"]):
                         continue
                     try:
                         await msg.delete()
-                        deleted = True
+                        deleted_physical = True
                     except Exception:
                         pass
         except Exception:
             pass
 
-        # 4. Permanently assert disabled state in RAM cache, SQLite DB, and Upstash Redis
+        # 4. UNCONDITIONALLY assert disabled state in RAM cache, SQLite DB, and Upstash Redis
         disabled_payload = json.dumps({"disabled": True, "message": None})
         self.sticky_cache[channel.id] = {"disabled": True, "message": None}
 
         try:
             await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (channel.id,))
-        except Exception:
-            pass
+            await self.bot.db.execute("DELETE FROM sticky_messages WHERE channel_id = ?", (str(channel.id),))
+        except Exception as e:
+            logger.error(f"SQLite deletion error: {e}")
 
         if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
             try:
@@ -286,12 +296,10 @@ class StickyCog(commands.Cog):
                 await self.bot.upstash.set(legacy_key, disabled_payload)
                 await self.bot.upstash.delete(key)
                 await self.bot.upstash.delete(legacy_key)
-                await self.bot.upstash.set(key, disabled_payload)
-                await self.bot.upstash.set(legacy_key, disabled_payload)
             except Exception as e:
                 logger.warning(f"Upstash Redis delete failed for sticky:{channel.id}: {e}")
 
-        return deleted
+        return had_active_config or deleted_physical
 
     async def _send_sticky(self, channel: discord.TextChannel, message_text: str, is_embed: bool) -> discord.Message:
         """Helper to post the sticky message as a clean embed or plain text."""
@@ -303,7 +311,7 @@ class StickyCog(commands.Cog):
             return await channel.send(embed=embed)
         return await channel.send(message_text)
 
-    # --- Consolidated Subcommand Group ---
+    # --- Slash Commands Group ---
 
     sticky = discord.SlashCommandGroup("sticky", "Sticky message engine controls.")
 
@@ -335,18 +343,7 @@ class StickyCog(commands.Cog):
 
         target_ch = channel or ctx.channel
         async with self.channel_locks[target_ch.id]:
-            # Sweep channel history for previous sticky messages
-            try:
-                async for past_msg in target_ch.history(limit=15):
-                    if past_msg.author.id == self.bot.user.id:
-                        if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
-                            continue
-                        try:
-                            await past_msg.delete()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            await self._delete_sticky_data(target_ch)
 
             sent_msg_id = None
             try:
@@ -398,6 +395,14 @@ class StickyCog(commands.Cog):
             )
         await ctx.respond(embed=embed, ephemeral=True)
 
+    @sticky.command(name="unsticky", description="Remove the sticky notice message from a channel.")
+    async def sticky_unsticky_slash(
+        self,
+        ctx: discord.ApplicationContext,
+        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
+    ):
+        """Slash subcommand alias (/sticky unsticky) to remove a sticky message."""
+        await self.sticky_remove_slash(ctx, channel)
 
     @sticky.command(name="list", description="List all active sticky messages in this server.")
     async def sticky_list_slash(self, ctx: discord.ApplicationContext):
@@ -430,9 +435,20 @@ class StickyCog(commands.Cog):
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
+    # --- Standalone Slash Command (/unsticky) ---
+
+    @discord.slash_command(name="unsticky", description="Remove the sticky notice message from a channel.")
+    async def standalone_unsticky_slash(
+        self,
+        ctx: discord.ApplicationContext,
+        channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None)
+    ):
+        """Standalone slash command (/unsticky) to remove a sticky message."""
+        await self.sticky_remove_slash(ctx, channel)
+
     # --- Prefix Command Fallbacks ---
 
-    @commands.command(name="sticky")
+    @commands.command(name="sticky", aliases=["setsticky", "addsticky"])
     async def sticky_prefix(self, ctx: commands.Context, *, message: str):
         """Prefix command fallback (!sticky <message> / !sticky -embed <message> / nym sticky <message>)."""
         if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
@@ -452,26 +468,13 @@ class StickyCog(commands.Cog):
             message_clean = message_clean[6:].strip()
 
         async with self.channel_locks[ctx.channel.id]:
-            # Delete author command message
             try:
                 await ctx.message.delete()
             except Exception:
                 pass
 
-            # Sweep channel history to remove any existing bot sticky messages
-            try:
-                async for past_msg in ctx.channel.history(limit=15):
-                    if past_msg.author.id == self.bot.user.id:
-                        if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
-                            continue
-                        try:
-                            await past_msg.delete()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            await self._delete_sticky_data(ctx.channel)
 
-            # Post single sticky message at the bottom
             sent_msg_id = None
             try:
                 new_msg = await self._send_sticky(ctx.channel, message_clean, is_embed)
@@ -487,7 +490,7 @@ class StickyCog(commands.Cog):
                 last_id=sent_msg_id
             )
 
-    @commands.command(name="unsticky")
+    @commands.command(name="unsticky", aliases=["removesticky", "delsticky", "rmsticky", "clearsticky", "nosticky"])
     async def unsticky_prefix(self, ctx: commands.Context):
         """Prefix command fallback (!unsticky / nym unsticky)."""
         if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
@@ -498,6 +501,8 @@ class StickyCog(commands.Cog):
 
         if deleted:
             await ctx.send("⌬ Sticky message removed from this channel.", delete_after=4.0)
+        else:
+            await ctx.send("⚠️ No active sticky message found in this channel.", delete_after=4.0)
 
     # --- Event Listener ---
 
@@ -508,7 +513,14 @@ class StickyCog(commands.Cog):
             return
 
         content_lower = message.content.lower().strip()
-        if "unsticky" in content_lower or "sticky" in content_lower:
+        
+        # Check if message is a command invocation to avoid race conditions
+        cmd_keywords = (
+            "!sticky", "!unsticky", ",sticky", ",unsticky",
+            "nym sticky", "nym unsticky", "hya sticky", "hya unsticky",
+            "setsticky", "removesticky", "delsticky", "clearsticky", "nosticky"
+        )
+        if content_lower in ("sticky", "unsticky") or any(content_lower.startswith(kw) for kw in cmd_keywords):
             return
 
         data = await self._get_sticky_data(message.channel.id)
@@ -543,7 +555,7 @@ class StickyCog(commands.Cog):
 
             # Purge any existing bot sticky messages in recent channel history to guarantee 0 duplicates
             try:
-                async for past_msg in message.channel.history(limit=15):
+                async for past_msg in message.channel.history(limit=25):
                     if past_msg.author.id == self.bot.user.id and past_msg.id != message.id:
                         if past_msg.embeds and any(kw in (past_msg.embeds[0].title or "") for kw in ["Configured", "Removed", "Portal"]):
                             continue

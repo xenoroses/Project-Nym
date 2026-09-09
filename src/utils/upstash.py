@@ -45,38 +45,50 @@ class UpstashRedis:
                 raise RuntimeError(f"Upstash ping failed [{response.status}]: {body}")
 
     async def set(self, key: str, value: str, ex_seconds: Optional[int] = None) -> bool:
-        """Set key value in Upstash Redis."""
+        """Set key value in Upstash Redis safely with POST body payload."""
         if not self.is_configured:
             return False
 
-        session = await self._get_session()
-        endpoint = f"{self.url}/set/{key}/{value}"
-        if ex_seconds:
-            endpoint += f"/EX/{ex_seconds}"
+        try:
+            session = await self._get_session()
+            endpoint = f"{self.url}/set/{key}"
+            if ex_seconds:
+                endpoint += f"/EX/{ex_seconds}"
 
-        async with session.post(endpoint) as response:
-            return response.status == 200
+            async with session.post(endpoint, data=value) as response:
+                return response.status == 200
+        except Exception as e:
+            logger.warning(f"Upstash Redis set error for key '{key}': {e}")
+            return False
 
     async def get(self, key: str) -> Optional[str]:
-        """Get value by key from Upstash Redis."""
+        """Get value by key from Upstash Redis safely."""
         if not self.is_configured:
             return None
 
-        session = await self._get_session()
-        async with session.get(f"{self.url}/get/{key}") as response:
-            if response.status == 200:
-                data = await response.json()
-                return data.get("result")
+        try:
+            session = await self._get_session()
+            async with session.get(f"{self.url}/get/{key}") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("result")
+                return None
+        except Exception as e:
+            logger.warning(f"Upstash Redis get error for key '{key}': {e}")
             return None
 
     async def delete(self, key: str) -> bool:
-        """Delete key from Upstash Redis."""
+        """Delete key from Upstash Redis safely."""
         if not self.is_configured:
             return False
 
-        session = await self._get_session()
-        async with session.post(f"{self.url}/del/{key}") as response:
-            return response.status == 200
+        try:
+            session = await self._get_session()
+            async with session.post(f"{self.url}/del/{key}") as response:
+                return response.status == 200
+        except Exception as e:
+            logger.warning(f"Upstash Redis delete error for key '{key}': {e}")
+            return False
 
     async def close(self) -> None:
         """Close HTTP session."""
