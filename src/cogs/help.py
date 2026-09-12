@@ -169,7 +169,6 @@ class HelpCategorySelect(discord.ui.Select):
             embed.add_field(name="`/confess send <message>` / `!confess <message>`", value="Submit an anonymous confession to the server channel.", inline=False)
             embed.add_field(name="`/confess setup <channel> [log_channel]`", value="Configure public confession channel and private admin log channel.", inline=False)
             embed.add_field(name="`/confess panel`", value="Post an interactive 'Submit Confession' modal button panel.", inline=False)
-            embed.add_field(name="`/confess trace <confession_id>`", value="[Admin Only] Trace the real author identity of a confession ID.", inline=False)
 
 
         elif category == "nymlock":

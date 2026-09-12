@@ -9,6 +9,10 @@ from src.utils.embeds import EmbedBuilder
 
 logger = logging.getLogger("Nym")
 
+IS_PYCORD = hasattr(discord, "SlashCommandGroup")
+if not IS_PYCORD:
+    from discord import app_commands
+
 
 class ConfessionModal(discord.ui.Modal):
     """Interactive Modal for submitting anonymous confessions."""
@@ -18,22 +22,42 @@ class ConfessionModal(discord.ui.Modal):
         self.bot = bot
         self.cog = cog
 
-        self.add_item(
-            discord.ui.InputText(
+        if IS_PYCORD:
+            self.add_item(
+                discord.ui.InputText(
+                    label="Your Anonymous Confession",
+                    style=discord.InputTextStyle.paragraph,
+                    placeholder="Type your confession here... Your identity will remain hidden from server members.",
+                    max_length=2000,
+                    required=True,
+                )
+            )
+        else:
+            self.confession_input = discord.ui.TextInput(
                 label="Your Anonymous Confession",
-                style=discord.InputTextStyle.paragraph,
+                style=discord.TextStyle.paragraph,
                 placeholder="Type your confession here... Your identity will remain hidden from server members.",
                 max_length=2000,
                 required=True,
             )
-        )
+            self.add_item(self.confession_input)
 
     async def callback(self, interaction: discord.Interaction):
-        confession_text = self.children[0].value.strip()
+        confession_text = ""
+        if hasattr(self, "children") and self.children and hasattr(self.children[0], "value"):
+            confession_text = str(self.children[0].value or "").strip()
+        elif hasattr(self, "confession_input") and hasattr(self.confession_input, "value"):
+            confession_text = str(self.confession_input.value or "").strip()
+
         if not confession_text:
-            return await interaction.response.send_message(
-                "❌ Confession text cannot be empty.", ephemeral=True
-            )
+            try:
+                if hasattr(interaction, "response") and not interaction.response.is_done():
+                    return await interaction.response.send_message(
+                        "❌ Confession text cannot be empty.", ephemeral=True
+                    )
+            except Exception:
+                pass
+            return
 
         await self.cog.process_confession(
             interaction=interaction,
@@ -41,6 +65,9 @@ class ConfessionModal(discord.ui.Modal):
             guild=interaction.guild,
             content=confession_text,
         )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.callback(interaction)
 
 
 class ConfessionPanelView(discord.ui.View):
@@ -54,17 +81,28 @@ class ConfessionPanelView(discord.ui.View):
     @discord.ui.button(
         label="Submit Confession",
         style=discord.ButtonStyle.primary,
+        emoji="✉️",
         custom_id="nym_confession_submit_btn",
     )
-    async def submit_button(
-        self, button: discord.ui.Button, interaction: discord.Interaction
-    ):
+    async def submit_button(self, arg1: Any, arg2: Any):
+        interaction = arg2 if isinstance(arg2, discord.Interaction) else arg1
         cog = self.bot.get_cog("ConfessionCog") or self.cog
         if not cog:
-            return await interaction.response.send_message("❌ Confession engine is currently offline.", ephemeral=True)
+            try:
+                if hasattr(interaction, "response") and not interaction.response.is_done():
+                    return await interaction.response.send_message("❌ Confession engine is currently offline.", ephemeral=True)
+            except Exception:
+                pass
+            return
 
         modal = ConfessionModal(self.bot, cog)
-        await interaction.response.send_modal(modal)
+        try:
+            if hasattr(interaction, "response") and hasattr(interaction.response, "send_modal"):
+                await interaction.response.send_modal(modal)
+            elif hasattr(interaction, "send_modal"):
+                await interaction.send_modal(modal)
+        except Exception as e:
+            logger.error(f"Failed opening confession modal: {e}")
 
 
 class ConfessionCog(commands.Cog):
@@ -72,12 +110,32 @@ class ConfessionCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.bot.add_view(ConfessionPanelView(bot, self))
+        self.config_cache = {}
+        try:
+            self.bot.add_view(ConfessionPanelView(bot, self))
+        except Exception:
+            pass
 
     @commands.Cog.listener()
     async def on_ready(self):
-        """Ensure persistent views are bound on bot ready."""
-        self.bot.add_view(ConfessionPanelView(self.bot, self))
+        """Pre-populate confession config RAM cache from SQLite DB and Upstash Redis on startup."""
+        try:
+            self.bot.add_view(ConfessionPanelView(self.bot, self))
+        except Exception:
+            pass
+
+        try:
+            rows = await self.bot.db.fetch_all("SELECT guild_id, channel_id, log_channel_id FROM confession_configs")
+            if rows:
+                for row in rows:
+                    if row["guild_id"] and row["channel_id"]:
+                        gid = int(row["guild_id"])
+                        self.config_cache[gid] = {
+                            "channel_id": int(row["channel_id"]),
+                            "log_channel_id": int(row["log_channel_id"]) if row["log_channel_id"] else None,
+                        }
+        except Exception as e:
+            logger.warning(f"SQLite confession config pre-population notice: {e}")
 
     def resolve_channel_id(self, ch: Any) -> Optional[int]:
         """Safely resolve channel ID from discord object, string mention, or integer."""
@@ -93,7 +151,6 @@ class ConfessionCog(commands.Cog):
 
     async def refresh_confession_panel(self, channel: discord.TextChannel):
         """Delete the old confession panel and repost it underneath the newest confession."""
-
         try:
             async for message in channel.history(limit=100):
                 if message.author.id != self.bot.user.id:
@@ -114,11 +171,11 @@ class ConfessionCog(commands.Cog):
         except Exception as e:
             logger.warning(f"Failed deleting old confession panel: {e}")
 
-        panel_embed = EmbedBuilder.base(
+        panel_embed = discord.Embed(
             title="💖 Anonymous Confession Portal",
-            description="Click the button below to submit an anonymous confession.\n"
-                        "Your identity will remain completely hidden from server members.",
-            color=EmbedBuilder.COLOR_NEKOTINA,
+            description="Click the button below to submit an **anonymous confession**.\n"
+                        "Your identity will remain completely hidden from regular server members.",
+            color=0xFF69B4,
         )
 
         view = ConfessionPanelView(self.bot, self)
@@ -131,34 +188,44 @@ class ConfessionCog(commands.Cog):
     # --- Storage Helpers ---
 
     async def _get_guild_config(self, guild_id: int) -> Optional[dict]:
-        """Fetch confession configuration for a guild."""
-        key = f"confession:config:{guild_id}"
+        """Fetch confession configuration with RAM Cache -> SQLite DB -> Upstash Redis fallback."""
+        if guild_id in self.config_cache:
+            cached = self.config_cache[guild_id]
+            if cached and cached.get("channel_id"):
+                return cached
 
-        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
-            try:
-                raw_data = await self.bot.upstash.get(key)
-                if raw_data:
-                    parsed = json.loads(raw_data)
-                    if isinstance(parsed, dict):
-                        return parsed
-            except Exception as e:
-                logger.warning(f"Upstash read failed for confession config {guild_id}: {e}")
-
+        # SQLite DB primary check
         try:
             row = await self.bot.db.fetch_one(
                 "SELECT channel_id, log_channel_id FROM confession_configs WHERE guild_id = ?",
                 (guild_id,),
             )
-            if row:
+            if row and row["channel_id"]:
                 data = {
-                    "channel_id": row["channel_id"],
-                    "log_channel_id": row["log_channel_id"],
+                    "channel_id": int(row["channel_id"]),
+                    "log_channel_id": int(row["log_channel_id"]) if row["log_channel_id"] else None,
                 }
-                if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
-                    await self.bot.upstash.set(key, json.dumps(data))
+                self.config_cache[guild_id] = data
                 return data
         except Exception as e:
             logger.error(f"SQLite read error for confession config {guild_id}: {e}")
+
+        key = f"nym:confession:config:{guild_id}"
+        legacy_key = f"confession:config:{guild_id}"
+
+        if getattr(self.bot, "upstash", None) and self.bot.upstash.is_configured:
+            try:
+                raw_data = await self.bot.upstash.get(key) or await self.bot.upstash.get(legacy_key)
+                if raw_data:
+                    parsed = json.loads(raw_data)
+                    if isinstance(parsed, str):
+                        try: parsed = json.loads(parsed)
+                        except Exception: pass
+                    if isinstance(parsed, dict) and parsed.get("channel_id"):
+                        self.config_cache[guild_id] = parsed
+                        return parsed
+            except Exception as e:
+                logger.warning(f"Upstash read failed for confession config {guild_id}: {e}")
 
         return None
 
@@ -168,8 +235,10 @@ class ConfessionCog(commands.Cog):
         channel_id: Optional[int] = None,
         log_channel_id: Optional[int] = None,
     ) -> dict:
-        """Save confession configuration for a guild."""
-        key = f"confession:config:{guild_id}"
+        """Save confession configuration for a guild to RAM Cache, SQLite DB, and Upstash Redis."""
+        key = f"nym:confession:config:{guild_id}"
+        legacy_key = f"confession:config:{guild_id}"
+
         current = await self._get_guild_config(guild_id) or {
             "channel_id": None,
             "log_channel_id": None,
@@ -180,24 +249,31 @@ class ConfessionCog(commands.Cog):
         if log_channel_id is not None:
             current["log_channel_id"] = log_channel_id
 
-        await self.bot.db.execute(
-            """
-            INSERT INTO confession_configs (guild_id, channel_id, log_channel_id)
-            VALUES (?, ?, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET
-                channel_id = excluded.channel_id,
-                log_channel_id = excluded.log_channel_id
-            """,
-            (
-                guild_id,
-                current["channel_id"],
-                current["log_channel_id"],
-            ),
-        )
+        self.config_cache[guild_id] = current
 
-        if hasattr(self.bot, "upstash") and self.bot.upstash.is_configured:
+        try:
+            await self.bot.db.execute(
+                """
+                INSERT INTO confession_configs (guild_id, channel_id, log_channel_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    channel_id = excluded.channel_id,
+                    log_channel_id = excluded.log_channel_id
+                """,
+                (
+                    guild_id,
+                    current["channel_id"],
+                    current["log_channel_id"],
+                ),
+            )
+        except Exception as e:
+            logger.error(f"SQLite write error for confession config {guild_id}: {e}")
+
+        if getattr(self.bot, "upstash", None) and self.bot.upstash.is_configured:
             try:
-                await self.bot.upstash.set(key, json.dumps(current))
+                payload = json.dumps(current)
+                await self.bot.upstash.set(key, payload)
+                await self.bot.upstash.set(legacy_key, payload)
             except Exception as e:
                 logger.warning(f"Upstash set failed for confession config {guild_id}: {e}")
 
@@ -215,7 +291,7 @@ class ConfessionCog(commands.Cog):
         """Processes and posts an anonymous confession and logs audit details for admins."""
         config = await self._get_guild_config(guild.id)
         if not config or not config.get("channel_id"):
-            msg = "⚠️ Confession channel is not configured in this server. An admin must run `/confess setup`."
+            msg = "⚠️ Confession channel is not configured in this server. An admin must run `/confess setup` or `!confess setup #channel`."
             if interaction:
                 return await interaction.response.send_message(msg, ephemeral=True)
             else:
@@ -237,11 +313,10 @@ class ConfessionCog(commands.Cog):
                     pass
             return
 
-        # 1. Post Anonymous Confession to Public Channel (Title-Less Quote Card)
-        public_embed = EmbedBuilder.base(
+        # 1. Post Anonymous Confession to Public Channel (Title-Less Quote Card, Pink Color)
+        public_embed = discord.Embed(
             description=f">>> *“{content}”*",
-            color=EmbedBuilder.COLOR_NEKOTINA,
-            include_timestamp=False,
+            color=0xFF69B4,
         )
 
         try:
@@ -255,24 +330,24 @@ class ConfessionCog(commands.Cog):
                     ephemeral=True,
                 )
 
-        # 2. Post Private Audit Log to Admin Log Channel (If Configured, No ID / Counter)
+        # 2. Post Private Audit Log to Admin Log Channel (If Configured)
         log_ch_id = config.get("log_channel_id")
         if log_ch_id:
             log_ch = guild.get_channel(log_ch_id)
             if log_ch:
-                admin_embed = EmbedBuilder.base(
+                admin_embed = discord.Embed(
                     title="🕵️ Anonymous Confession Log",
                     description=f"**Content:**\n>>> {content}",
-                    color=EmbedBuilder.COLOR_WARNING,
-                    footer=f"Logged at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+                    color=0xE74C3C,
+                    timestamp=datetime.now(timezone.utc)
                 )
                 admin_embed.add_field(
-                    name="Author Identity",
-                    value=f"{user.mention} (`{user.name}` | `ID: {user.id}`)",
+                    name="👤 Author Identity",
+                    value=f"{user.mention} (`{user}` | `ID: {user.id}`)",
                     inline=True,
                 )
                 admin_embed.add_field(
-                    name="Channel",
+                    name="📍 Channel",
                     value=confession_ch.mention,
                     inline=True,
                 )
@@ -294,99 +369,132 @@ class ConfessionCog(commands.Cog):
             except Exception:
                 pass
 
-    # --- Commands ---
+    # --- Slash Commands Group ---
 
-    confess = discord.SlashCommandGroup(
-        "confess", "Anonymous confession engine and administrator controls."
-    )
+    if IS_PYCORD:
+        confess = discord.SlashCommandGroup("confess", "Anonymous confession engine and administrator controls.")
 
-    @confess.command(
-        name="send",
-        description="Submit an anonymous confession to the server confession channel.",
-    )
-    async def confess_send(
-        self,
-        ctx: discord.ApplicationContext,
-        message: str = discord.Option(description="Your anonymous confession text"),
-    ):
-        """Submit an anonymous confession via slash command."""
-        await self.process_confession(
-            interaction=ctx.interaction,
-            user=ctx.author,
-            guild=ctx.guild,
-            content=message.strip(),
-        )
+        @confess.command(name="send", description="Submit an anonymous confession to the server confession channel.")
+        async def confess_send_slash(self, ctx: discord.ApplicationContext, message: str = discord.Option(description="Your anonymous confession text")):
+            await self.process_confession(interaction=ctx.interaction, user=ctx.author, guild=ctx.guild, content=message.strip())
 
-    @confess.command(
-        name="setup", description="Set up the designated channel for public anonymous confessions."
-    )
-    async def confess_setup(
-        self,
-        ctx: discord.ApplicationContext,
-        channel: discord.Option(description="Target channel for public confessions"), # type: ignore
-        log_channel: discord.Option(description="Private admin channel for author audit logs (Optional)", default=None), # type: ignore
-    ):
-        """Configure public confession and private admin log channels."""
-        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
-            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission to configure confessions.", ephemeral=True)
+        @confess.command(name="modal", description="Open multiline confession modal directly.")
+        async def confess_modal_slash(self, ctx: discord.ApplicationContext):
+            modal = ConfessionModal(self.bot, self)
+            await ctx.send_modal(modal)
 
-        ch_id = self.resolve_channel_id(channel)
-        if not ch_id:
-            return await ctx.respond("❌ Invalid confession channel specified.", ephemeral=True)
+        @confess.command(name="setup", description="Set up designated channel for public anonymous confessions.")
+        async def confess_setup_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            channel: discord.Option(description="Target channel for public confessions"),
+            log_channel: discord.Option(description="Private admin channel for author audit logs (Optional)", default=None),
+        ):
+            if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+                return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
 
-        target_ch = ctx.guild.get_channel(ch_id)
-        if not target_ch:
-            return await ctx.respond(f"❌ Channel with ID `{ch_id}` not found in this server.", ephemeral=True)
+            ch_id = self.resolve_channel_id(channel)
+            if not ch_id:
+                return await ctx.respond("❌ Invalid confession channel specified.", ephemeral=True)
 
-        log_id = self.resolve_channel_id(log_channel)
-        log_ch = ctx.guild.get_channel(log_id) if log_id else None
+            target_ch = ctx.guild.get_channel(ch_id)
+            if not target_ch:
+                return await ctx.respond(f"❌ Channel with ID `{ch_id}` not found in this server.", ephemeral=True)
 
-        await self._set_guild_config(
-            guild_id=ctx.guild.id, channel_id=target_ch.id, log_channel_id=log_ch.id if log_ch else None
-        )
+            log_id = self.resolve_channel_id(log_channel)
+            log_ch = ctx.guild.get_channel(log_id) if log_id else None
 
-        embed = EmbedBuilder.success(
-            title="Confession Engine Configured",
-            description=f"✧ Public confessions channel set to {target_ch.mention}.\n"
-                        f"• **Admin Audit Logs:** {log_ch.mention if log_ch else '`Not Configured`'}\n"
-                        f"• Use `/confess panel` to send an interactive submission button to the channel.",
-        )
-        await ctx.respond(embed=embed, ephemeral=True)
+            await self._set_guild_config(guild_id=ctx.guild.id, channel_id=target_ch.id, log_channel_id=log_ch.id if log_ch else None)
 
-    @confess.command(
-        name="panel",
-        description="Send an interactive 'Submit Confession' button panel to the channel.",
-    )
-    async def confess_panel(
-        self,
-        ctx: discord.ApplicationContext,
-        channel: Optional[discord.TextChannel] = discord.Option(
-            description="Target channel (Defaults to current channel)", default=None
-        ),
-    ):
-        """Send an interactive submission panel with a modal popup button."""
-        if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
-            return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission to post the panel.", ephemeral=True)
-
-        target_ch = channel or ctx.channel
-        embed = EmbedBuilder.base(
-            title="💖 Anonymous Confession Portal",
-            description="Click the button below to submit an **anonymous confession**.\n"
-                        "Your identity will remain completely hidden from regular server members.",
-            color=EmbedBuilder.COLOR_NEKOTINA,
-        )
-        view = ConfessionPanelView(self.bot, self)
-
-        try:
-            await target_ch.send(embed=embed, view=view)
-            await ctx.respond(
-                f"✅ Interactive confession panel posted to {target_ch.mention}.",
-                ephemeral=True,
+            panel_embed = discord.Embed(
+                title="💖 Anonymous Confession Portal",
+                description="Click the button below to submit an **anonymous confession**.\n"
+                            "Your identity will remain completely hidden from regular server members.",
+                color=0xFF69B4,
             )
-        except Exception as e:
-            await ctx.respond(
-                f"❌ Failed posting panel to {target_ch.mention}: {e}", ephemeral=True
+            view = ConfessionPanelView(self.bot, self)
+
+            try:
+                await target_ch.send(embed=panel_embed, view=view)
+                log_msg = f" and log channel to {log_ch.mention}" if log_ch else ""
+                await ctx.respond(f"✨ **Confession channel set to {target_ch.mention}{log_msg}.**", ephemeral=True)
+            except Exception as e:
+                await ctx.respond(f"❌ Failed setting up channel: {e}", ephemeral=True)
+
+        @confess.command(name="panel", description="Send an interactive 'Submit Confession' button panel to the channel.")
+        async def confess_panel_slash(
+            self,
+            ctx: discord.ApplicationContext,
+            channel: Optional[discord.TextChannel] = discord.Option(description="Target channel (Defaults to current channel)", default=None),
+        ):
+            if not ctx.author.guild_permissions.manage_channels and not ctx.author.guild_permissions.administrator:
+                return await ctx.respond("❌ You need **Manage Channels** or **Administrator** permission.", ephemeral=True)
+
+            target_ch = channel or ctx.channel
+            embed = discord.Embed(
+                title="💖 Anonymous Confession Portal",
+                description="Click the button below to submit an **anonymous confession**.\n"
+                            "Your identity will remain completely hidden from regular server members.",
+                color=0xFF69B4,
             )
+            view = ConfessionPanelView(self.bot, self)
+
+            try:
+                await target_ch.send(embed=embed, view=view)
+                await ctx.respond(f"✅ Interactive confession panel posted to {target_ch.mention}.", ephemeral=True)
+            except Exception as e:
+                await ctx.respond(f"❌ Failed posting panel to {target_ch.mention}: {e}", ephemeral=True)
+
+    else:
+        confess_group = app_commands.Group(name="confess", description="Anonymous confession engine and administrator controls.")
+
+        @confess_group.command(name="send", description="Submit an anonymous confession to the server confession channel.")
+        async def confess_send_app(self, interaction: discord.Interaction, message: str):
+            await self.process_confession(interaction=interaction, user=interaction.user, guild=interaction.guild, content=message.strip())
+
+        @confess_group.command(name="modal", description="Open multiline confession modal directly.")
+        async def confess_modal_app(self, interaction: discord.Interaction):
+            modal = ConfessionModal(self.bot, self)
+            await interaction.response.send_modal(modal)
+
+        @confess_group.command(name="setup", description="Set up designated channel for public anonymous confessions.")
+        @app_commands.checks.has_permissions(manage_channels=True)
+        async def confess_setup_app(self, interaction: discord.Interaction, channel: discord.TextChannel, log_channel: Optional[discord.TextChannel] = None):
+            log_id = log_channel.id if log_channel else None
+            await self._set_guild_config(interaction.guild.id, channel_id=channel.id, log_channel_id=log_id)
+
+            panel_embed = discord.Embed(
+                title="💖 Anonymous Confession Portal",
+                description="Click the button below to submit an **anonymous confession**.\n"
+                            "Your identity will remain completely hidden from regular server members.",
+                color=0xFF69B4,
+            )
+            view = ConfessionPanelView(self.bot, self)
+
+            try:
+                await channel.send(embed=panel_embed, view=view)
+                log_msg = f" and log channel to {log_channel.mention}" if log_channel else ""
+                await interaction.response.send_message(f"✨ **Confession channel set to {channel.mention}{log_msg}.**", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"❌ Failed setting up channel: {e}", ephemeral=True)
+
+        @confess_group.command(name="panel", description="Send an interactive 'Submit Confession' button panel to the channel.")
+        @app_commands.checks.has_permissions(manage_channels=True)
+        async def confess_panel_app(self, interaction: discord.Interaction, channel: Optional[discord.TextChannel] = None):
+            target_ch = channel or interaction.channel
+            embed = discord.Embed(
+                title="💖 Anonymous Confession Portal",
+                description="Click the button below to submit an **anonymous confession**.\n"
+                            "Your identity will remain completely hidden from regular server members.",
+                color=0xFF69B4,
+            )
+            view = ConfessionPanelView(self.bot, self)
+
+            try:
+                await target_ch.send(embed=embed, view=view)
+                await interaction.response.send_message(f"✅ Interactive confession panel posted to {target_ch.mention}.", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"❌ Failed posting panel to {target_ch.mention}: {e}", ephemeral=True)
 
     # --- Prefix Commands Fallback ---
 
@@ -410,11 +518,11 @@ class ConfessionCog(commands.Cog):
             return await ctx.send("⚠️ Please mention a channel: `!confess setup #confessions [#admin-log]`.")
 
         if sub == "panel" and (ctx.author.guild_permissions.manage_channels or ctx.author.guild_permissions.administrator):
-            embed = EmbedBuilder.base(
+            embed = discord.Embed(
                 title="💖 Anonymous Confession Portal",
-                description="Click the button below to submit an anonymous confession.\n"
-                            "Your identity will remain completely hidden from server members.",
-                color=EmbedBuilder.COLOR_NEKOTINA,
+                description="Click the button below to submit an **anonymous confession**.\n"
+                            "Your identity will remain completely hidden from regular server members.",
+                color=0xFF69B4,
             )
             view = ConfessionPanelView(self.bot, self)
             await ctx.channel.send(embed=embed, view=view)
@@ -423,6 +531,12 @@ class ConfessionCog(commands.Cog):
             except Exception:
                 pass
             return
+
+        if sub == "modal":
+            modal = ConfessionModal(self.bot, self)
+            if hasattr(ctx, "send_modal"):
+                return await ctx.send_modal(modal)
+            return await ctx.send("⚠️ Please use `/confess modal` or click the button on the confession portal panel.")
 
         # Delete author prefix message to preserve anonymity
         try:
@@ -438,5 +552,9 @@ class ConfessionCog(commands.Cog):
         )
 
 
-def setup(bot: commands.Bot):
-    bot.add_cog(ConfessionCog(bot))
+if IS_PYCORD:
+    def setup(bot: commands.Bot):
+        bot.add_cog(ConfessionCog(bot))
+else:
+    async def setup(bot: commands.Bot):
+        await bot.add_cog(ConfessionCog(bot))

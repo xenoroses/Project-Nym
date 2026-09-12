@@ -1,8 +1,17 @@
+import sys
 import threading
 import os
 import time
 import httpx
 import gradio as gr
+
+# Silence internal Gradio event loop garbage collection notices on Linux
+def _custom_unraisablehook(unraisable):
+    if unraisable.exc_type is ValueError and "Invalid file descriptor" in str(unraisable.exc_value):
+        return
+    sys.__unraisablehook__(unraisable)
+
+sys.unraisablehook = _custom_unraisablehook
 
 # Hugging Face ZeroGPU Startup Validator
 try:
@@ -13,10 +22,29 @@ try:
 except Exception as e:
     print(f"ZeroGPU notice: {e}")
 
-import asyncio
+import socket
+
+_SINGLE_INSTANCE_SOCKET = None
+
+def acquire_single_instance_lock(port: int = 18999) -> bool:
+    global _SINGLE_INSTANCE_SOCKET
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", port))
+        s.listen(1)
+        _SINGLE_INSTANCE_SOCKET = s
+        print(f"Single-instance lock successfully acquired on port {port}.")
+        return True
+    except Exception as e:
+        print(f"Single-instance lock check for port {port}: {e}. Skipping duplicate bot thread.")
+        return False
 
 # Start Nym Bot in a background thread after Gradio initializes
 def run_nym_bot():
+    if not acquire_single_instance_lock(18999):
+        print("Duplicate Nym Bot startup prevented cleanly.")
+        return
+
     time.sleep(3)  # Short delay to allow Gradio to bind port 7860 first
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
