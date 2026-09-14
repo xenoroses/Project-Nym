@@ -183,6 +183,23 @@ class DatabaseManager:
             """
         )
 
+        # Table: Active Timers
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS active_timers (
+                timer_id TEXT PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER,
+                author_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                end_time REAL NOT NULL,
+                participants TEXT DEFAULT '[]',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Table: NymLock Access (Granted trusted users)
         await self._db.execute(
             """
