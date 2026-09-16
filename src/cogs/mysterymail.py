@@ -4,6 +4,7 @@ import uuid
 import json
 import os
 from datetime import datetime, timezone
+from typing import Optional, Union
 
 NYM_BANNER_PATH = "assets/banner.jpg"
 NYM_BANNER_CDN = "https://cdn.discordapp.com/attachments/1000000000000000000/banner_lovesknot.jpg"
@@ -308,7 +309,12 @@ class MysteryMailCog(commands.Cog):
 
     @discord.slash_command(name="mysterymail", description="Display the interactive Mystery Mail panel.")
     @commands.has_permissions(manage_guild=True)
-    async def mysterymail_cmd(self, ctx: discord.ApplicationContext):
+    async def mysterymail_cmd(
+        self,
+        ctx: discord.ApplicationContext,
+        channel: Optional[discord.TextChannel] = None
+    ):
+        target_ch = channel or ctx.channel
         embed = discord.Embed(
             description=(
                 "*Ever wondered who's been thinking about you?*\n\n"
@@ -327,13 +333,18 @@ class MysteryMailCog(commands.Cog):
 
         view = NymMysteryMailPanelView()
 
-        if os.path.exists(NYM_BANNER_PATH):
-            file = discord.File(NYM_BANNER_PATH, filename="banner.jpg")
-            embed.set_image(url="attachment://banner.jpg")
-            await ctx.respond(embed=embed, file=file, view=view)
-        else:
-            embed.set_image(url=NYM_BANNER_CDN)
-            await ctx.respond(embed=embed, view=view)
+        try:
+            if os.path.exists(NYM_BANNER_PATH):
+                file = discord.File(NYM_BANNER_PATH, filename="banner.jpg")
+                embed.set_image(url="attachment://banner.jpg")
+                await target_ch.send(embed=embed, file=file, view=view)
+            else:
+                embed.set_image(url=NYM_BANNER_CDN)
+                await target_ch.send(embed=embed, view=view)
+
+            await ctx.respond(f"✨ **Interactive Mystery Mail panel posted to {target_ch.mention}.**", ephemeral=True)
+        except Exception as e:
+            await ctx.respond(f"❌ Failed posting panel to {target_ch.mention}: {e}", ephemeral=True)
 
     @discord.slash_command(name="mysterymaillog", description="Set the audit log channel for Mystery Mail anti-abuse oversight.")
     @commands.has_permissions(manage_guild=True)
