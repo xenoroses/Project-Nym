@@ -28,6 +28,8 @@ class HealthServer:
         data = {
             "status": "ok",
             "bot": "Nym",
+            "version": "2026.10.03.v2",
+            "confession_engine": "title_less_pink_quote_v2",
             "uptime_seconds": uptime,
             "message": "Nym Bot health check operational"
         }

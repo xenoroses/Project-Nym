@@ -2,6 +2,7 @@ py-cord==2.8.1
 aiosqlite
 colorlog
 python-dotenv
+aiohttp
 gradio>=5.0.0
 huggingface_hub>=0.25.0
 httpx
