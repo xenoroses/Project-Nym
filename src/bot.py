@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import inspect
 from typing import List
 import discord
 from discord.ext import commands
@@ -105,14 +106,22 @@ class NymBot(commands.Bot):
         await self.health_server.start()
 
         # 3. Auto-load all cogs from src/cogs/
-        self._load_extensions_from_dir("src/cogs", "src.cogs")
+        await self._load_extensions_from_dir("src/cogs", "src.cogs")
 
         # 4. Auto-load all event listeners from src/events/
-        self._load_extensions_from_dir("src/events", "src.events")
+        await self._load_extensions_from_dir("src/events", "src.events")
 
-        # 5. Start Discord bot client
+        # 5. Start Discord bot client with resilience for privileged intents
         logger.info("Starting Nym Discord client...")
-        await super().start(token, reconnect=reconnect)
+        try:
+            await super().start(token, reconnect=reconnect)
+        except discord.errors.PrivilegedIntentsRequired:
+            logger.warning(
+                "⚠️ Privileged Gateway Intents (Server Members / Message Content) are NOT enabled in Developer Portal. "
+                "Falling back to default intents so Nym stays online..."
+            )
+            self._connection._intents = discord.Intents.default()
+            await super().start(token, reconnect=reconnect)
 
     async def close(self) -> None:
         """Gracefully shut down database connections, health server, and bot client."""
@@ -122,8 +131,7 @@ class NymBot(commands.Bot):
         await self.db.close()
         await super().close()
 
-
-    def _load_extensions_from_dir(self, dir_path: str, module_prefix: str) -> None:
+    async def _load_extensions_from_dir(self, dir_path: str, module_prefix: str) -> None:
         """Scan directory and dynamically load extension modules."""
         if not os.path.exists(dir_path):
             logger.warning(f"Directory '{dir_path}' does not exist, skipping extension loading.")
@@ -134,7 +142,9 @@ class NymBot(commands.Bot):
             if filename.endswith(".py") and not filename.startswith("__"):
                 module_name = f"{module_prefix}.{filename[:-3]}"
                 try:
-                    self.load_extension(module_name)
+                    res = self.load_extension(module_name)
+                    if inspect.isawaitable(res):
+                        await res
                     logger.info(f"Loaded extension: {module_name}")
                     loaded_count += 1
                 except Exception as e:
